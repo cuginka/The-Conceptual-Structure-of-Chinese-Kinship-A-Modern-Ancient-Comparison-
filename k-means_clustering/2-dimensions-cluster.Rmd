@@ -1,0 +1,343 @@
+---
+title: "2-PCA-cluster"
+author: "Jipeng Duan"
+date: "2025-11-29"
+output: html_document
+---
+
+```{r}
+library(FactoMineR)
+library(factoextra)#fviz_eig
+library(psych)
+
+library(ggplot2)
+library(corrplot)
+library(RColorBrewer)
+
+library(tidyverse)
+library(reshape)#melt
+library(nFactors)#optimal number of components
+```
+
+```{r}
+plotnScree <-
+function (nScree,
+          elbow = 3,
+          legend = TRUE,
+          ylab   = "Eigenvalues",
+          xlab   = "Components",
+          main   = "Non Graphical Solutions to Scree Test")
+          {
+   if (!inherits(nScree, "nScree"))  stop("Method is only for nScree objects")
+   #if (!exists("legend", mode="logical") ) legend <- TRUE                                   # To develop
+   #if (!exists("ylab"))                    ylab <- "Eigenvalues"                            # To develop
+   #if (!exists("xlab"))                    xlab <- "Components"                             # To develop
+   #if (!exists("main"))                    main <- "Non Graphical Solutions to Scree Test"  # To develop
+   if (nScree$Model == "components") nkaiser = "Eigenvalues (>mean  = " else nkaiser = "Eigenvalues (>0 = "
+   if (nScree$Model == "factors")  xlab   = "Factors"
+   par(col   = 1, pch = 1)     # Color and symbol for usual scree
+   par(mfrow = c(1,1),lwd=2)
+   eig        <- nScree$Analysis$Eigenvalues
+   k          <- 1:length(eig)
+   #plotuScree(x=eig, ...)                                                                   # To develop
+   plotuScree(x=eig, main=main, xlab=xlab, ylab=ylab)
+   nk         <- length(eig)
+   noc        <- nScree$Components$noc
+   vp.p       <- lm(eig[c(noc+1,nk)] ~ k[c(noc+1,nk)])
+   x          <- sum(c(1,1) * coef(vp.p))
+   y          <- sum(c(1,nk)* coef(vp.p))
+   par(col = 10)            # Color for optimal coordinates
+   lines(k[c(1,nk)],c(x,y),lwd=1.8)
+   par(col = 11,pch=2)            # Color and symbol for parallel analysis
+   lines(1:nk, nScree$Analysis$Par.Analysis, type = "b",lwd=1.8)
+   if (legend == TRUE) {
+     leg.txt  <- c(paste("Parallel Analysis (n = ",nScree$Components$nparallel,")"),
+                 c(paste("Kaiser-Guttman rule (n = ",nScree$Components$nkaiser,")")),
+                 c(paste("Cattell’s scree test (n = ",elbow,")")),
+                 c(paste("Optimal Coordinates (n = ",nScree$Components$noc,")")) )
+     legend("topright",
+            legend   = leg.txt,
+            pch      = c('△','_','○','_'),
+            text.col = c(3,4,1,2), 
+            col = c(3,4,1,2),
+            cex = 1.3)
+     }
+   naf        <-   nScree$Components$naf
+   text(x = noc ,    y = eig[noc],     label = " (OC)", cex = 1, adj = c(0,0), col = 2)
+#    text(x = naf + 1, y = eig[naf + 1], label = " (AF)", cex = .70, adj = c(0,0), col = 4)
+   }
+```
+
+```{r}
+# import relationship dimension ratings scaled from the Data cleaning's output
+dim_rel_scaled = read.csv('output_data//dim_rel_scaled_33d.csv', row.names=1,encoding='UTF-8')
+
+dim_rel_scaled <- na.omit(dim_rel_scaled)
+
+# Parallel analysis, Optimal Coordinates, and  Cattell's Scree Test
+ev <- eigen(cor(dim_rel_scaled)) # get eigenvalues
+ap <- parallel(subject=nrow(dim_rel_scaled),var=ncol(dim_rel_scaled),model="components",rep=5000,cent=.05) 
+nS <- nScree(x=ev$values, model = "components",aparallel=ap$eigen$qevpea) # "qevpea" indicate 95 centile given cent=.05 
+```
+
+```{r}
+nS$Analysis$Cumu[1:5]
+```
+
+```{r}
+options(repr.plot.width=8,repr.plot.height=8)
+plotnScree(nS, elbow = 3,legend=TRUE, main = NULL)
+abline(h = 1, col=4, lty=1,lwd =1.8) # Kaiser-Guttman Rule
+```
+
+```{r}
+png("output_graph/optimal_components.png",
+    family = 'sans',units='in',width=8,height=8,res=300)
+plotnScree(nS,elbow = 3, legend=TRUE, main = NULL)
+abline(h = 1, col=4, lty=1,lwd =1.8) # Kaiser-Guttman Rule
+dev.off()
+```
+
+```{r}
+dim_rel.pca = prcomp(dim_rel_scaled)
+ncomp = 5
+
+loadings_none = dim_rel.pca$rotation[,1:ncomp]%*% diag(dim_rel.pca$sdev,ncomp,ncomp)
+scores_none = dim_rel.pca$x[,1:ncomp] 
+
+loadings_var = varimax(loadings_none)$loadings
+scores_var = scale(scores_none) %*% varimax(loadings_none)$rotmat
+loadings_var
+
+write.csv(loadings_var,'output_data/pca_results/loadings_var.csv',fileEncoding = "GB18030")
+write.csv(scores_var,'output_data/pca_results/scores_var.csv',fileEncoding = "GB18030")
+```
+
+```{r}
+prin_rotated = principal(dim_rel_scaled,rotate='varimax',nfactor=5)
+prin_rotated$loadings
+```
+
+```{r}
+loadings_var = read.csv('output_data/pca_results/loadings_var.csv',row.names=1,fileEncoding = "GB18030")
+```
+
+```{r}
+loadings_var_reorder = as.data.frame(loadings_var[,1:ncomp])
+colnames(loadings_var_reorder) = c('Formality','Activeness','Valence','Exchange','Equality')
+
+#filter each row's max loading, and attribute it to correspoding column.
+order_list = c()
+for (row in c(1:33)){
+    temp_max = abs(loadings_var_reorder[row,1])
+    n = 1
+    for (col in c(2:5)){
+        temp = abs(loadings_var_reorder[row,col])
+        if (temp > temp_max){
+            temp_max = temp
+            n = col
+        }
+        
+    }
+    order_list[row] = n
+}
+loadings_var_reorder = loadings_var_reorder %>% mutate(order = order_list)
+RC1 = loadings_var_reorder %>% filter(order==1) %>% arrange(desc(Formality))
+RC2 = loadings_var_reorder %>% filter(order==2) %>% arrange(desc(Activeness))
+RC3 = loadings_var_reorder %>% filter(order==3) %>% arrange(Valence)
+RC4 = loadings_var_reorder %>% filter(order==4) %>% arrange(desc(Exchange))
+RC5 = loadings_var_reorder %>% filter(order==5) %>% arrange(desc(Equality))
+
+loadings_var_reorder = rbind(RC1,RC2,RC3,RC4,RC5)
+loadings_var_reorder = loadings_var_reorder[1:5]
+
+options(repr.plot.width=12, repr.plot.height=20)
+my.breaks = c(seq(-1,1,by=0.01))
+corrplot(as.matrix(loadings_var_reorder),is.corr=FALSE,
+         tl.col = "black",tl.srt=45,tl.cex=0.7,family='sans',font=2,
+         col.lim = c(-1,1),cl.ratio = 0.3,cl.cex=0.5,
+         col = colorRampPalette(rev(brewer.pal(n=7,name ="BrBG")))(length(my.breaks)))
+```
+
+```{r}
+png("output_graph/exp1_loading_bipolar.png", bg="transparent",
+    family = 'sans',units='in',width=6,height=10,res=300)
+colnames(loadings_var_reorder) = c('Formality','Activeness','Valence','Exchange','Equality')
+my.breaks = c(seq(-1,1,by=0.01))
+
+corrplot(as.matrix(loadings_var_reorder),is.corr=FALSE,
+         tl.col = "black",tl.srt=60,tl.cex=1.1,family='sans',font=2,
+         col.lim = c(-1,1),cl.ratio = 0.4,cl.cex=1,
+         col = colorRampPalette(rev(brewer.pal(n=7,name ="BrBG")))(length(my.breaks)))
+dev.off()
+```
+
+
+
+```{r}
+library(ggrepel)
+```
+
+```{r}
+fix_label = function(rels){
+    rels = gsub(' and ','-',rels)
+    rels = gsub(' – ','-',rels)
+    rels = gsub('Between ','',rels)
+    return(rels)
+}
+
+scores_var = read.csv('output_data/pca_results/scores_var.csv',row.names=1)
+```
+
+```{r}
+scores_var_plot = data.frame(scores_var)
+colnames(scores_var_plot) = c('Formality','Activeness','Valence','Exchange','Equality')
+scores_var_plot['Equality'] = -scores_var_plot['Equality']
+scores_var_plot['Valence'] = -scores_var_plot['Valence']
+
+scores_var_plot['rel'] = rownames(scores_var_plot)
+```
+
+```{r}
+library(tidyverse)
+library(MASS)
+library(corrplot)
+library(RColorBrewer)
+library(corrplot)
+library(ggrepel)
+```
+
+```{r}
+MDS_Regression = function(dissim, DV, ndim=5, type_mds){
+    if(type_mds == 'mds'){
+        fit_mds_score_none = cmdscale(dissim,eig=TRUE,k=ndim)
+    }
+    if(type_mds == 'nmds'){
+        fit_mds_score_none = isoMDS(as.matrix(dissim),k=ndim)
+    }    
+    
+    # plot solution
+    Dim1 = fit_mds_score_none$points[,1]
+    Dim2 = fit_mds_score_none$points[,2]
+    
+    options(repr.plot.width=5, repr.plot.height=5)
+    plot(Dim1, Dim2, xlab="Formality", ylab="Valence",main="mds", type="n")
+    text(Dim1, Dim2, labels = row.names(dissim), cex=.6)
+    
+    # independent variable for regression 
+    IV = fit_mds_score_none$points
+    IV = as.data.frame(IV)
+    IV_reorder = IV[rownames(DV),]
+    
+    count = 0
+    for (i in seq(159)){
+        if (rownames(DV)[i] == rownames(IV_reorder)[i]){
+            count = count+1
+        }
+    }
+
+    if (count == 159){
+        coe_matrix = matrix(nrow = 30, ncol = 7)
+        coe_df = as.data.frame(coe_matrix)
+        row.names(coe_df) = colnames(DV)
+        colnames(coe_df) = c('V1','V2','V3','V4','V5','R2','F')
+
+        #Regression in each dimension
+        for (i in seq(30)){
+            if (ndim==5){
+                fit = lm(DV[[i]]~IV_reorder$V1+IV_reorder$V2+IV_reorder$V3+IV_reorder$V4+IV_reorder$V5)
+            }
+            if (ndim==4){
+                fit = lm(DV[[i]]~IV_reorder$V1+IV_reorder$V2+IV_reorder$V3+IV_reorder$V4)
+            }
+            if (ndim==2){
+                fit = lm(DV[[i]]~IV_reorder$V1+IV_reorder$V2)
+            }
+            #print(colnames(DV)[i])
+            #print(summary(fit))
+
+            for (j in 1:ndim){
+                coe_df[i,j] = fit$coefficients[j+1]
+              }
+              coe_df[i,6] = summary(fit)$r.square
+              coe_df[i,7] = summary(fit)$fstatistic[1]
+        }
+    }
+    
+    #output
+    result = list(coe_df = coe_df,
+                  IV = IV)
+    return(result)
+}
+
+Plot_coefficient = function(coe_df,ndim=5,task='Implicit'){
+    options(repr.plot.width=6, repr.plot.height=6)
+    loadings_none_reorder = coe_df[,1:ndim]
+
+    #filter each row's max loading, and attribute it to correspnding column.
+    order_list = c()
+    for (row in c(1:30)){
+        temp_max = abs(loadings_none_reorder[row,1])
+        n = 1
+        for (col in c(1:ndim)){
+            temp = abs(loadings_none_reorder[row,col])
+            if (temp > temp_max){
+                temp_max = temp
+                n = col
+            }
+
+        }
+        order_list[row] = n
+    }
+    
+    loadings_none_reorder = loadings_none_reorder %>% mutate(order = order_list) %>% arrange(order)
+    
+    if (ndim==2) {
+        V1 = loadings_none_reorder %>% filter(order==1) %>% arrange(desc(V1))
+        V2 = loadings_none_reorder %>% filter(order==2) %>% arrange(desc(V2))
+        loadings_none_reorder = rbind(V1,V2)
+        loadings_none_reorder = loadings_none_reorder[1:ndim]
+        colnames(loadings_none_reorder) = c('V1','V2')
+    }
+
+    if (ndim==4) {
+        V1 = loadings_none_reorder %>% filter(order==1) %>% arrange(desc(V1))
+        V2 = loadings_none_reorder %>% filter(order==2) %>% arrange(desc(V2))
+        V3 = loadings_none_reorder %>% filter(order==3) %>% arrange(desc(V3))
+        V4 = loadings_none_reorder %>% filter(order==4) %>% arrange(desc(V4))
+        loadings_none_reorder = rbind(V1,V2,V3,V4)
+        loadings_none_reorder = loadings_none_reorder[1:ndim]
+        colnames(loadings_none_reorder) = c('V1','V2','V3','V4')
+    }
+    
+    if (ndim==5) {
+        V1 = loadings_none_reorder %>% filter(order==1) %>% arrange(desc(V1))
+        V2 = loadings_none_reorder %>% filter(order==2) %>% arrange(desc(V2))
+        V3 = loadings_none_reorder %>% filter(order==3) %>% arrange(desc(V3))
+        V4 = loadings_none_reorder %>% filter(order==4) %>% arrange(desc(V4))
+        V5 = loadings_none_reorder %>% filter(order==5) %>% arrange(desc(V5))
+        loadings_none_reorder = rbind(V1,V2,V3,V4,V5)
+        loadings_none_reorder = loadings_none_reorder[1:ndim]
+        colnames(loadings_none_reorder) = c('V1','V2','V3','V4','V5')
+    }
+
+    #title = paste(task,'76 rels')
+#     loadings_plot = pheatmap(loadings_none_reorder,cluster_row = FALSE, cluster_col = FALSE,
+#              color = colorRampPalette(rev(brewer.pal(n=7,name ="RdBu")))(100),
+#              angle_col = '0',fontsize_col = 12, main=title)
+    
+    options(repr.plot.width=6, repr.plot.height=10)
+    #my.breaks = c(seq(-1,1,by=0.01))
+    corrplot(as.matrix(loadings_none_reorder),is.corr=FALSE,tl.col = "black",tl.srt=90,tl.cex=1,cl.ratio = 0.4,cl.cex=1,
+             col = colorRampPalette(rev(brewer.pal(n=7,name ="RdBu")))(100))    
+}
+```
+
+```{r}
+DV_159 = read.csv('./output_data/dim_rel_scaled_33d.csv',row.names=1)
+dim_dist = as.matrix(dist(DV_159,method = "euclidean"))
+
+# MDS
+coe_df_5d = MDS_Regression(dim_dist,DV_159,ndim=5,type_mds='mds')$coe_df
+IV_5d = MDS_Regression(dim_dist,DV_159,ndim=5,type_mds='mds')$IV
+```
