@@ -1,0 +1,366 @@
+---
+title: "2.caculate"
+author: "HuangYi"
+date: "2026-03-04"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## R Markdown
+
+This is an R Markdown document. Markdown is a simple formatting syntax for authoring HTML, PDF, and MS Word documents. For more details on using R Markdown see <http://rmarkdown.rstudio.com>.
+
+When you click the **Knit** button a document will be generated that includes both content as well as the output of any embedded R code chunks within the document. You can embed an R code chunk like this:
+
+```{r cars}
+summary(cars)
+```
+
+## Including Plots
+
+You can also embed plots, for example:
+
+```{r pressure, echo=FALSE}
+plot(pressure)
+```
+
+Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.
+
+```{r}
+library(lsa) #cosine
+library(mgsub)
+library(openxlsx)
+library(readxl)
+
+library(corrplot)
+library(RColorBrewer)
+library(ggplot2)
+library(patchwork)
+```
+
+```{r}
+cosine_matrix = function(raw_data){
+    # rel*rel matrix caculated by cosine similarity
+    n <- nrow(raw_data)  # raw_data is an n x n matrix, 123*dimensions
+    # create an empty matrix to store cosine similarity
+    raw_data_cor <- matrix(0, nrow = n, ncol = n)
+    colnames(raw_data_cor) <- rownames(raw_data)
+    rownames(raw_data_cor) <- rownames(raw_data)
+    # calculate the cosine similarity of the upper triangular part
+    for (i in 1:(n - 1)) {
+        for (j in (i + 1):n) {
+            cosine_value <- cosine(as.numeric(raw_data[i, ]), as.numeric(raw_data[j, ]))
+            raw_data_cor[i, j] <- cosine_value
+        }
+    }
+    # symmetrically fill the cosine similarity in the lower triangular part
+    raw_data_cor <- raw_data_cor + t(raw_data_cor)
+
+    # set the diagonal to 1
+    diag(raw_data_cor) <- 1
+    return(raw_data_cor)
+}
+
+lowerTriangle <- function(m){
+  return(m[lower.tri(m,diag = FALSE)])
+}
+
+# R.scale() uses ddof=1, but sklearn.preprocessing.StandardScaler() uses ddof=0
+scaleN <- function(data){
+  data_scaled <- scale(data)*sqrt(nrow(data)/(nrow(data)-1))  
+  return(data_scaled)
+}
+```
+
+# Human Rating
+```{r}
+# modern:  relationships
+human_123r_33d = read.csv('human_rating_data/dim_rel_scaled_33d.csv',
+                        row.names=1,quote = "",fileEncoding='gb18030')
+rels_order_modern = rownames(human_123r_33d)
+human_123r_33d_sim = cosine_matrix(human_123r_33d)
+write.csv(human_123r_33d_sim,'human_rating_data/human_model/human_33d_123r_cosine.csv')
+```
+
+```{r}
+library(readr)
+human_123r_33d_tibble = read_csv('human_rating_data/dim_rel_scaled_33d.csv')
+
+# 转换为普通 data.frame 并设置行名
+human_123r_33d = as.data.frame(human_123r_33d_tibble)
+
+# 假设第一列是行名（你需要确认一下第一列的名字，read_csv不会自动把第一列变成索引）
+# 获取第一列的内容作为行名
+rownames(human_123r_33d) = human_123r_33d[[1]]
+# 删除第一列数据
+human_123r_33d = human_123r_33d[, -1]
+
+rels_order_modern = rownames(human_123r_33d)
+human_123r_33d_sim = cosine_matrix(human_123r_33d)
+write.csv(human_123r_33d_sim,'human_rating_data/human_model/human_33d_123r_cosine.csv')
+```
+
+
+
+# Bert Embedding
+## modern
+```{r}
+prompt_rels_map = read.xlsx('../1_DeepSeek_Description/modern/relationships.xlsx')
+name_mapping <- setNames(prompt_rels_map$'relations', # new name
+                         prompt_rels_map$'query') # old name
+print(name_mapping)
+```
+
+
+```{r}
+rel_emb_sim_modern = function(input_path,output){
+    files = list.files(input_path)
+    for (file in files){
+        file_path = paste0(input_path,file)
+        bert_data = read.csv(file_path,row.names=1,fileEncoding = "gb18030")
+
+        # change the suitable labels
+        bert_data$'word' = name_mapping[bert_data$'word']
+        rownames(bert_data) = bert_data$'word'
+        bert_data = bert_data[,-1]
+        bert_data = bert_data[rels_order_modern,]
+        
+        #bert_data$'word' = name_mapping[rownames(bert_data)]
+        #new_names = name_mapping[rownames(bert_data)]
+        #rownames(bert_data) = new_names
+        #bert_data = bert_data[, sapply(bert_data, is.numeric)]
+        #bert_data = bert_data[rels_order_modern, ]
+
+        # scale by column(1024d)
+        bert_data_scaled = scaleN(bert_data)
+        # caculate cosine_similarity
+        bert_data_cor = cosine_matrix(bert_data_scaled)
+        
+        sum(is.na(bert_data))    # 统计每列缺失
+
+        output_path = paste0(output,file)
+        dir.create(dirname(output_path), recursive = TRUE, showWarnings = FALSE)
+        write.csv(bert_data_cor,output_path)
+    }
+    print(input_path)
+}
+```
+
+
+```{r}
+library(readxl)
+
+prompt_rels_map = read.xlsx('../1_DeepSeek_Description/modern/relationships.xlsx')
+
+prompt_rels_map$query<-trimws(as.character(prompt_rels_map$query))
+prompt_rels_map$relations <- trimws(as.character(prompt_rels_map$relations))
+
+# 创建映射字典：Query文本 -> 关系名称
+# 比如："夫妻之间" -> "夫妻"
+name_mapping <- setNames(prompt_rels_map$relations, prompt_rels_map$query)
+
+# 【关键步骤 B】确立 142 对关系的完整顺序列表
+# 这里的 unique 确保了如果有重复行也不会报错，这是我们要输出的最终行名列表
+target_142_order <- unique(prompt_rels_map$relations)
+
+print(paste("目标关系总数：", length(target_142_order))) # 应该显示 142
+```
+
+```{r}
+# ==========================================
+# 2. 函数定义：处理 BERT 数据
+# ==========================================
+rel_emb_sim_modern = function(input_path, output){
+  files = list.files(input_path)
+  
+  for (file in files){
+    file_path = paste0(input_path, file)
+    
+    # 读取 BERT 数据
+    # 注意：如果不确定第一列是不是行名，建议 header=TRUE, 然后手动处理
+    bert_data = read.csv(file_path, row.names=1, fileEncoding = "gb18030")
+    
+    # 检查是否存在 'word' 列
+    if(is.null(bert_data$word)) {
+      print(paste("跳过文件（无word列）:", file))
+      next
+    }
+    
+    # 【关键步骤 C】清洗 BERT 数据里的 Query 文本
+    # 强制去空格，确保能和映射表对上
+    current_queries <- trimws(as.character(bert_data$word))
+    
+    # 执行映射：将 Query 文本转为 关系名称
+    mapped_names <- name_mapping[current_queries]
+    
+    # 【排查点】检查是否有映射失败的（即变成了 NA）
+    if(any(is.na(mapped_names))) {
+      # 打印出前 5 个匹配失败的词，方便你检查原因
+      failed_words <- current_queries[is.na(mapped_names)]
+      print(paste("【警告】文件", file, "中有", length(failed_words), "个词映射失败！"))
+      print("示例失败词汇（请检查Excel里是否有这些词，注意标点和空格）:")
+      print(head(failed_words))
+      
+      # 暂时剔除这些匹配不上的行，防止后面报错
+      valid_idx <- !is.na(mapped_names)
+      bert_data <- bert_data[valid_idx, ]
+      mapped_names <- mapped_names[valid_idx]
+    } else {
+      # 如果没问题，就赋值新的名字
+      bert_data$word <- mapped_names # 此时 word 列已经变成了 "夫妻", "父子" 等
+    }
+    
+    # 将行名修改为关系名称
+    # 注意：如果有重复的关系名（比如两个不同的query映射到了同一个关系），这里会报错
+    # 我们假设关系是唯一的。如果有重复，需要去重。
+    bert_data <- bert_data[!duplicated(bert_data$word), ]
+    rownames(bert_data) = bert_data$word
+    
+    # 移除非数值列 (word列)
+    # 假设除了 word 之外都是 embedding 数值
+    bert_data_numeric <- bert_data[ , colnames(bert_data) != "word"]
+    
+    # 【关键步骤 D】按照 142 个关系的顺序重新排列
+    # 找出当前数据里有的、且在目标列表里的关系
+    common_rels <- intersect(target_142_order, rownames(bert_data_numeric))
+    
+    # 检查缺失情况
+    if(length(common_rels) < 142){
+      missing <- setdiff(target_142_order, rownames(bert_data_numeric))
+      print(paste("【提示】文件", file, "包含关系数:", length(common_rels), "/ 142"))
+      if(length(missing) > 0 && length(missing) < 20) { # 只有少量缺失才打印
+         print(paste("缺失:", paste(missing, collapse=",")))
+      }
+    }
+    
+    # 重新排序（这一步会自动剔除多余的，保留标准的 142 个）
+    # 如果缺失了某个关系，这里会产生 NA 行。我们先只取有的。
+    bert_data_final <- bert_data_numeric[common_rels, ]
+    
+    # 只有当数据不为空时才计算
+    if(nrow(bert_data_final) > 1){
+      # Scale
+      bert_data_scaled = scaleN(bert_data_final)
+      # Cosine
+      bert_data_cor = cosine_matrix(bert_data_scaled)
+      
+      # 输出
+      output_path = paste0(output, file)
+      dir.create(dirname(output_path), recursive = TRUE, showWarnings = FALSE)
+      write.csv(bert_data_cor, output_path)
+    }
+  }
+  print(paste("处理完成目录:", input_path))
+}
+
+```
+
+
+```{r}
+
+querys = dir('bert_embedding_data/modern/')
+for (query in querys){
+    print(query)
+    input_path = paste0('bert_embedding_data/modern/',query,'/')
+    output = paste0('sim_bert_embedding/modern/',query,'/')
+    rel_emb_sim_modern(input_path = input_path, output = output)
+}
+```
+
+## ancient
+```{r}
+prompt_rels_map = read.csv('human_rating_data/ancient_modern_map_143r.csv',row.names=1,check.names=FALSE, fileEncoding = "gb18030")
+name_mapping <- setNames(prompt_rels_map$'对应的现代人际关系', # new name
+                         prompt_rels_map$'query') # old name
+```
+
+```{r}
+rel_emb_sim_ancient = function(input_path,output){
+    files = list.files(input_path)
+    for (file in files){
+        file_path = paste0(input_path,file)
+        bert_data = read.csv(file_path,row.names=1,encoding='gb18030')
+
+        # change the suitable labels
+        bert_data = bert_data[bert_data$'word' %in% prompt_rels_map$'query',]
+        bert_data$'word' = prompt_rels_map$'对应的现代人际关系'
+        #rownames(bert_data) = bert_data$'word'
+        bert_data = bert_data[,-1]
+
+        # scale by column(768d)
+        bert_data_scaled = scaleN(bert_data)
+        # caculate cosine_similarity
+        bert_data_cor = cosine_matrix(bert_data_scaled)
+
+        output_path = paste0(output,file)
+        dir.create(dirname(output_path), recursive = TRUE, showWarnings = FALSE)
+        write.csv(bert_data_cor,output_path)
+    }
+    print(input_path)
+}
+```
+
+```{r}
+rel_emb_sim_ancient = function(input_path, output) {
+  files = list.files(input_path)
+  for (file in files) {
+    file_path = paste0(input_path, file)
+    
+    bert_data = read.csv(file_path, row.names=NULL, encoding='gb18030')
+    colnames(bert_data)[1] = "old_word"
+    
+    bert_data_merged = merge(prompt_rels_map[, c("query", "对应的现代人际关系")], 
+                             bert_data, 
+                             by.x = "query", 
+                             by.y = "old_word")
+    
+    new_labels = bert_data_merged$"对应的现代人际关系"
+    
+    numeric_data = bert_data_merged[, 3:ncol(bert_data_merged)]
+    
+    bert_data_scaled = scaleN(numeric_data)
+    bert_data_cor = cosine_matrix(bert_data_scaled)
+    
+    rownames(bert_data_cor) = new_labels
+    colnames(bert_data_cor) = new_labels
+    output_path = paste0(output, file)
+    dir.create(dirname(output_path), recursive = TRUE, showWarnings = FALSE)
+    write.csv(bert_data_cor, output_path)
+  }
+  print(input_path)
+}
+```
+
+
+```{r}
+querys = dir('bert_embedding_data/ancient/')
+for (query in querys[1:2]){
+    input_path = paste0('bert_embedding_data/ancient/',query,'/')
+    files = dir(input_path)
+    files = files[grep("^(關_)",files)]
+    for (file in files){
+        file_pair = gsub('關','系',file)
+        output_file = gsub('關','關系',file)
+        embedding_results1 = read.csv(paste0(input_path,file), row.names=1)
+        embedding_results2 = read.csv(paste0(input_path,file_pair), row.names=1)
+        
+        embedding_results = embedding_results1
+        embedding_results[,1:768] = (embedding_results1[,1:768]+embedding_results2[,1:768])/2
+        write.csv(embedding_results,
+                  paste0('bert_embedding_data/ancient/',query,'/',output_file))
+    }
+}
+```
+
+```{r}
+for (query in querys){
+    print(query)
+    input_path = paste0('bert_embedding_data/ancient/',query,'/')
+    output = paste0('sim_bert_embedding/ancient/',query,'/')
+    rel_emb_sim_ancient(input_path = input_path, output = output)
+}
+```
+

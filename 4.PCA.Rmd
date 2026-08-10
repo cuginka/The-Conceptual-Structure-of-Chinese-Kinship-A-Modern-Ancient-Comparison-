@@ -1,0 +1,1165 @@
+---
+title: "4.RSA"
+author: "HuangYi"
+date: "2026-03-07"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## R Markdown
+
+This is an R Markdown document. Markdown is a simple formatting syntax for authoring HTML, PDF, and MS Word documents. For more details on using R Markdown see <http://rmarkdown.rstudio.com>.
+
+When you click the **Knit** button a document will be generated that includes both content as well as the output of any embedded R code chunks within the document. You can embed an R code chunk like this:
+
+```{r cars}
+summary(cars)
+```
+
+## Including Plots
+
+You can also embed plots, for example:
+
+```{r pressure, echo=FALSE}
+plot(pressure)
+```
+
+Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.
+
+```{r}
+library(mgsub)
+library(lsa) #cosine
+library(tidyverse)
+library(ggplot2)
+library(corrplot)
+library(RColorBrewer)
+library(openxlsx)
+library(readxl)
+```
+
+```{r}
+lowerTriangle <- function(m){
+  return(m[lower.tri(m,diag = FALSE)])
+}
+
+# R.scale() uses ddof=1, but sklearn.preprocessing.StandardScaler() uses ddof=0
+scaleN <- function(data){
+  data_scaled <- scale(data)*sqrt(nrow(data)/(nrow(data)-1))  
+  return(data_scaled)
+}
+
+cosine_matrix = function(raw_data){
+    # rel*rel matrix caculated by cosine similarity
+    n <- nrow(raw_data)  # raw_data is an n x n matrix, 159*dimensions
+    # create an empty matrix to store cosine similarity
+    raw_data_cor <- matrix(0, nrow = n, ncol = n)
+    colnames(raw_data_cor) <- rownames(raw_data)
+    rownames(raw_data_cor) <- rownames(raw_data)
+    # calculate the cosine similarity of the upper triangular part
+    for (i in 1:(n - 1)) {
+        for (j in (i + 1):n) {
+            cosine_value <- cosine(as.numeric(raw_data[i, ]), as.numeric(raw_data[j, ]))
+            raw_data_cor[i, j] <- cosine_value
+        }
+    }
+    # symmetrically fill the cosine similarity in the lower triangular part
+    raw_data_cor <- raw_data_cor + t(raw_data_cor)
+
+    # set the diagonal to 1S
+    diag(raw_data_cor) <- 1
+    return(raw_data_cor)
+}
+```
+
+
+# Human rating
+```{r}
+human_scores = read.csv('human_rating_data/human_model/human_123r_favee.csv',row.names=1, fileEncoding = 'gb18030')
+human_scores = human_scores[,c('Formality','Activeness','Valence','Exchange','Equality')]
+rels_modern_order = rownames(human_scores)
+# cosine similarity of human rating
+human_sim = read.csv('human_rating_data/human_model/human_33d_123r_cosine.csv',
+                     row.names = 1, check.names = FALSE, fileEncoding = 'gb18030')
+human_sim_array = lowerTriangle(human_sim)
+
+# correlation
+human_33d = read.csv('human_rating_data/dim_rel_scaled_33d.csv',row.names=1, fileEncoding = 'gb18030')
+```
+# Bert Embedding
+## modern
+### Query3.1: [DESC]The most salient feature of the relationship [TERM] is [MASK].
+```{r}
+bert_768d=read.csv('bert_embedding_data/modern/q3.1_bert_embedding_data/MASK_embedding_output.csv',
+                   row.names = 1, check.names = FALSE, fileEncoding = 'gb18030')
+rownames(bert_768d) = bert_768d$'word'
+bert_768d = bert_768d[,-c(1)]
+labels_new = read_excel('../1_DeepSeek_Description/modern/relationships.xlsx')
+bert_768d = scaleN(bert_768d)
+rownames(bert_768d) = mgsub(rownames(bert_768d),labels_new$'query',labels_new$'relations')
+bert_768d = bert_768d[rels_modern_order,]
+dim(bert_768d)
+
+bert_768d_modern_sim = cosine_matrix(bert_768d)
+bert_768d_sim_array = lowerTriangle(bert_768d_modern_sim)
+raw_bert = cor(human_sim_array,bert_768d_sim_array, method = 'spearman')
+raw_bert
+```
+
+```{r}
+
+r_bert_distri = c()
+for (i in (1:10000)){
+    sel = sample(123)
+    bert_permat = bert_768d_modern_sim[sel,sel]
+    bert_rdm = bert_permat[lower.tri(bert_permat,diag = FALSE)]
+    r_bert = cor(scale(human_sim_array),scale(bert_rdm))
+    r_bert_distri = c(r_bert_distri,r_bert)
+}
+
+sum(r_bert_distri>raw_bert)/10000
+```
+
+# FAVEE
+```{r}
+ncomp = 3
+dim_rel.pca = prcomp(bert_768d)
+loadings_none = dim_rel.pca$rotation[,1:ncomp]%*% diag(dim_rel.pca$sdev,ncomp,ncomp)
+scores_none = dim_rel.pca$x[,1:ncomp] 
+
+# pca with varimax rotation
+loadings_var = data.frame(varimax(loadings_none)$loadings[,])
+scores_var = scale(scores_none) %*% varimax(loadings_none)$rotmat
+
+bert_scores = data.frame(scores_var)
+colnames(bert_scores) = paste0('V',seq(1,ncomp),'.bert')
+
+bert_human_combine = cbind(human_scores,bert_scores)
+bert_human_cor = cor(bert_human_combine,method='spearman')
+
+options(repr.plot.width=6, repr.plot.height=8)
+corrplot(bert_human_cor[1:5,6:length(bert_human_combine)],is.corr=FALSE,
+         addCoef.col = "black",
+         tl.col="black",tl.cex=1.5,
+         col.lim = c(-1,1),
+         col = colorRampPalette(rev(brewer.pal(n=7,name ="RdBu")))(100))
+```
+
+```{r}
+ncomp = 4
+dim_rel.pca = prcomp(bert_768d)
+loadings_none = dim_rel.pca$rotation[,1:ncomp]%*% diag(dim_rel.pca$sdev,ncomp,ncomp)
+scores_none = dim_rel.pca$x[,1:ncomp] 
+
+# pca with varimax rotation
+loadings_var = data.frame(varimax(loadings_none)$loadings[,])
+scores_var = scale(scores_none) %*% varimax(loadings_none)$rotmat
+
+bert_scores = data.frame(scores_var)
+colnames(bert_scores) = paste0('V',seq(1,ncomp),'.bert')
+
+bert_human_combine = cbind(human_scores,bert_scores)
+bert_human_cor = cor(bert_human_combine,method='spearman')
+
+options(repr.plot.width=6, repr.plot.height=8)
+corrplot(bert_human_cor[1:5,6:length(bert_human_combine)],is.corr=FALSE,
+         addCoef.col = "black",
+         tl.col="black",tl.cex=1.5,
+         col.lim = c(-1,1),
+         col = colorRampPalette(rev(brewer.pal(n=7,name ="RdBu")))(100))
+```
+
+```{r}
+ncomp = 5
+dim_rel.pca = prcomp(bert_768d)
+loadings_none = dim_rel.pca$rotation[,1:ncomp]%*% diag(dim_rel.pca$sdev,ncomp,ncomp)
+scores_none = dim_rel.pca$x[,1:ncomp] 
+
+# pca with varimax rotation
+loadings_var = data.frame(varimax(loadings_none)$loadings[,])
+scores_var = scale(scores_none) %*% varimax(loadings_none)$rotmat
+
+bert_scores = data.frame(scores_var)
+colnames(bert_scores) = paste0('V',seq(1,ncomp),'.bert')
+
+bert_human_combine = cbind(human_scores,bert_scores)
+bert_human_cor = cor(bert_human_combine,method='spearman')
+
+options(repr.plot.width=6, repr.plot.height=8)
+corrplot(bert_human_cor[1:5,6:length(bert_human_combine)],is.corr=FALSE,
+         addCoef.col = "black",
+         tl.col="black",tl.cex=1.5,
+         col.lim = c(-1,1),
+         col = colorRampPalette(rev(brewer.pal(n=7,name ="RdBu")))(100))
+```
+
+```{r}
+ncomp = 6
+dim_rel.pca = prcomp(bert_768d)
+loadings_none = dim_rel.pca$rotation[,1:ncomp]%*% diag(dim_rel.pca$sdev,ncomp,ncomp)
+scores_none = dim_rel.pca$x[,1:ncomp] 
+
+# pca with varimax rotation
+loadings_var = data.frame(varimax(loadings_none)$loadings[,])
+scores_var = scale(scores_none) %*% varimax(loadings_none)$rotmat
+
+bert_scores = data.frame(scores_var)
+colnames(bert_scores) = paste0('V',seq(1,ncomp),'.bert')
+
+bert_human_combine = cbind(human_scores,bert_scores)
+bert_human_cor = cor(bert_human_combine,method='spearman')
+
+options(repr.plot.width=6, repr.plot.height=8)
+corrplot(bert_human_cor[1:5,6:length(bert_human_combine)],is.corr=FALSE,
+         addCoef.col = "black",
+         tl.col="black",tl.cex=1.5,
+         col.lim = c(-1,1),
+         col = colorRampPalette(rev(brewer.pal(n=7,name ="RdBu")))(100))
+```
+
+```{r}
+ncomp = 7
+dim_rel.pca = prcomp(bert_768d)
+loadings_none = dim_rel.pca$rotation[,1:ncomp]%*% diag(dim_rel.pca$sdev,ncomp,ncomp)
+scores_none = dim_rel.pca$x[,1:ncomp] 
+
+# pca with varimax rotation
+loadings_var = data.frame(varimax(loadings_none)$loadings[,])
+scores_var = scale(scores_none) %*% varimax(loadings_none)$rotmat
+
+bert_scores = data.frame(scores_var)
+colnames(bert_scores) = paste0('V',seq(1,ncomp),'.bert')
+
+bert_human_combine = cbind(human_scores,bert_scores)
+bert_human_cor = cor(bert_human_combine,method='spearman')
+
+options(repr.plot.width=6, repr.plot.height=8)
+corrplot(bert_human_cor[1:5,6:length(bert_human_combine)],is.corr=FALSE,
+         addCoef.col = "black",
+         tl.col="black",tl.cex=1.5,
+         col.lim = c(-1,1),
+         col = colorRampPalette(rev(brewer.pal(n=7,name ="RdBu")))(100))
+```
+
+```{r}
+ncomp = 7
+dim_rel.pca = prcomp(bert_768d)
+loadings_none = dim_rel.pca$rotation[,1:ncomp]%*% diag(dim_rel.pca$sdev,ncomp,ncomp)
+scores_none = dim_rel.pca$x[,1:ncomp] 
+
+# pca with varimax rotation
+loadings_var = data.frame(varimax(loadings_none)$loadings[,])
+scores_var = scale(scores_none) %*% varimax(loadings_none)$rotmat
+
+bert_scores = data.frame(scores_var)
+colnames(bert_scores) = paste0('V',seq(1,ncomp),'.bert')
+
+bert_human_combine = cbind(human_scores,bert_scores)
+bert_human_cor = cor(bert_human_combine,method='spearman')
+bert_scores_modern = bert_scores
+
+options(repr.plot.width=8, repr.plot.height=8)
+plot_scores_modern = abs(bert_human_cor)[1:5,6:length(bert_human_combine)]
+plot_scores_modern = plot_scores_modern[,paste0('V',c(seq(1,4),c(6,5,7)),'.bert')]
+plot_scores_modern = plot_scores_modern[c('Formality','Valence','Activeness','Exchange','Equality'),]
+corrplot(plot_scores_modern,is.corr=FALSE,
+         addCoef.col = "black",
+         tl.col="black",tl.cex=1.5,
+         col.lim = c(0,1),cl.cex=1.2,
+         col = colorRampPalette(c("white","#9368A8"))(100))
+
+cor.test(human_scores$'Formality',bert_scores$'V1.bert',method='spearman')
+cor.test(human_scores$'Activeness',bert_scores$'V3.bert',method='spearman')
+cor.test(human_scores$'Valence',bert_scores$'V2.bert',method='spearman')
+cor.test(human_scores$'Exchange',bert_scores$'V4.bert',method='spearman')
+cor.test(human_scores$'Equality',bert_scores$'V6.bert',method='spearman')
+```
+
+```{r}
+png("output_graph/Modern_PCA_cor.png", bg="transparent",
+    family = 'sans',units='in',width=8,height=8,res=300)
+options(repr.plot.width=8, repr.plot.height=8)
+plot_scores_modern = abs(bert_human_cor)[1:5,6:length(bert_human_combine)]
+plot_scores_modern = plot_scores_modern[c('Formality','Valence','Activeness','Exchange','Equality'),]
+plot_scores_modern = plot_scores_modern[,paste0('V',c(seq(1,4),c(6,5,7)),'.bert')]
+corrplot(plot_scores_modern,is.corr=FALSE,
+         #addCoef.col = "black",
+         tl.col="black",tl.cex=1.5,
+         col.lim = c(0,1),cl.cex=1.2,
+         col = colorRampPalette(c("white","#9368A8"))(100))
+dev.off()
+```
+
+```{r}
+ncomp = 8
+dim_rel.pca = prcomp(bert_768d)
+loadings_none = dim_rel.pca$rotation[,1:ncomp]%*% diag(dim_rel.pca$sdev,ncomp,ncomp)
+scores_none = dim_rel.pca$x[,1:ncomp] 
+
+# pca with varimax rotation
+loadings_var = data.frame(varimax(loadings_none)$loadings[,])
+scores_var = scale(scores_none) %*% varimax(loadings_none)$rotmat
+
+bert_scores = data.frame(scores_var)
+colnames(bert_scores) = paste0('V',seq(1,ncomp),'.bert')
+
+bert_human_combine = cbind(human_scores,bert_scores)
+bert_human_cor = cor(bert_human_combine,method='spearman')
+
+options(repr.plot.width=6, repr.plot.height=8)
+corrplot(bert_human_cor[1:5,6:length(bert_human_combine)],is.corr=FALSE,
+         addCoef.col = "black",
+         tl.col="black",tl.cex=1.5,
+         col.lim = c(-1,1),
+         col = colorRampPalette(rev(brewer.pal(n=7,name ="RdBu")))(100))
+```
+
+```{r}
+ncomp = 9
+dim_rel.pca = prcomp(bert_768d)
+loadings_none = dim_rel.pca$rotation[,1:ncomp]%*% diag(dim_rel.pca$sdev,ncomp,ncomp)
+scores_none = dim_rel.pca$x[,1:ncomp] 
+
+# pca with varimax rotation
+loadings_var = data.frame(varimax(loadings_none)$loadings[,])
+scores_var = scale(scores_none) %*% varimax(loadings_none)$rotmat
+
+bert_scores = data.frame(scores_var)
+colnames(bert_scores) = paste0('V',seq(1,ncomp),'.bert')
+
+bert_human_combine = cbind(human_scores,bert_scores)
+bert_human_cor = cor(bert_human_combine,method='spearman')
+
+options(repr.plot.width=6, repr.plot.height=8)
+corrplot(bert_human_cor[1:5,6:length(bert_human_combine)],is.corr=FALSE,
+         addCoef.col = "black",
+         tl.col="black",tl.cex=1.5,
+         col.lim = c(-1,1),
+         col = colorRampPalette(rev(brewer.pal(n=7,name ="RdBu")))(100))
+```
+
+```{r}
+ncomp = 10
+dim_rel.pca = prcomp(bert_768d)
+loadings_none = dim_rel.pca$rotation[,1:ncomp]%*% diag(dim_rel.pca$sdev,ncomp,ncomp)
+scores_none = dim_rel.pca$x[,1:ncomp] 
+
+# pca with varimax rotation
+loadings_var = data.frame(varimax(loadings_none)$loadings[,])
+scores_var = scale(scores_none) %*% varimax(loadings_none)$rotmat
+
+bert_scores = data.frame(scores_var)
+colnames(bert_scores) = paste0('V',seq(1,ncomp),'.bert')
+
+bert_human_combine = cbind(human_scores,bert_scores)
+bert_human_cor = cor(bert_human_combine,method='spearman')
+
+options(repr.plot.width=6, repr.plot.height=8)
+corrplot(bert_human_cor[1:5,6:length(bert_human_combine)],is.corr=FALSE,
+         addCoef.col = "black",
+         tl.col="black",tl.cex=1.5,
+         col.lim = c(-1,1),
+         col = colorRampPalette(rev(brewer.pal(n=7,name ="RdBu")))(100))
+```
+
+```{r}
+brewer.pal(n=7,name ="RdBu")
+```
+
+# 33 dimensions
+```{r}
+ncomp = 5
+dim_rel.pca = prcomp(bert_768d)
+loadings_none = dim_rel.pca$rotation[,1:ncomp]%*% diag(dim_rel.pca$sdev,ncomp,ncomp)
+scores_none = dim_rel.pca$x[,1:ncomp] 
+
+# pca with varimax rotation
+loadings_var = data.frame(varimax(loadings_none)$loadings[,])
+scores_var = scale(scores_none) %*% varimax(loadings_none)$rotmat
+
+bert_scores = data.frame(scores_var)
+colnames(bert_scores) = paste0('V',seq(1,ncomp),'.bert')
+
+bert_human_combine = cbind(human_33d,bert_scores)
+bert_human_cor = cor(bert_human_combine,method='spearman')
+bert_loading = bert_human_cor[1:33,34:length(bert_human_combine)]
+loadings_var_reorder = data.frame(bert_loading)
+
+#filter each row's max loading, and attribute it to correspnding column.
+order_list = c()
+for (row in c(1:33)){
+    temp_max = abs(loadings_var_reorder[row,1])
+    n = 1
+    for (col in c(2:5)){
+        temp = abs(loadings_var_reorder[row,col])
+        if (temp > temp_max){
+            temp_max = temp
+            n = col
+        }
+        
+    }
+    order_list[row] = n
+}
+loadings_var_reorder = loadings_var_reorder %>% mutate(order = order_list)
+RC1 = loadings_var_reorder %>% filter(order==1) %>% arrange(V1.bert)
+RC2 = loadings_var_reorder %>% filter(order==2) %>% arrange(desc(V2.bert))
+RC3 = loadings_var_reorder %>% filter(order==3) %>% arrange(V3.bert)
+RC4 = loadings_var_reorder %>% filter(order==4) %>% arrange(V4.bert)
+RC5 = loadings_var_reorder %>% filter(order==5) %>% arrange(desc(V5.bert))
+
+loadings_var_reorder = rbind(RC1,RC2,RC3,RC4,RC5)
+loadings_var_reorder = loadings_var_reorder[1:5]
+
+options(repr.plot.width=10, repr.plot.height=10)
+corrplot(as.matrix(loadings_var_reorder),is.corr=FALSE,
+         #addCoef.col = "black",
+         tl.col="black",tl.cex=1.5,
+         cl.ratio = 0.6,
+         col.lim = c(-1,1),
+         cl.cex = 1.5,
+         col = colorRampPalette(rev(brewer.pal(n=7,name ="RdBu")))(100))
+```
+
+```{r}
+ncomp = 6
+dim_rel.pca = prcomp(bert_768d)
+loadings_none = dim_rel.pca$rotation[,1:ncomp]%*% diag(dim_rel.pca$sdev,ncomp,ncomp)
+scores_none = dim_rel.pca$x[,1:ncomp] 
+
+# pca with varimax rotation
+loadings_var = data.frame(varimax(loadings_none)$loadings[,])
+scores_var = scale(scores_none) %*% varimax(loadings_none)$rotmat
+
+bert_scores = data.frame(scores_var)
+colnames(bert_scores) = paste0('V',seq(1,ncomp),'.bert')
+
+bert_human_combine = cbind(human_33d,bert_scores)
+bert_human_cor = cor(bert_human_combine,method='spearman')
+bert_loading = bert_human_cor[1:33,34:length(bert_human_combine)]
+loadings_var_reorder = data.frame(bert_loading)
+
+#filter each row's max loading, and attribute it to correspnding column.
+order_list = c()
+for (row in c(1:33)){
+    temp_max = abs(loadings_var_reorder[row,1])
+    n = 1
+    for (col in c(2:5)){
+        temp = abs(loadings_var_reorder[row,col])
+        if (temp > temp_max){
+            temp_max = temp
+            n = col
+        }
+        
+    }
+    order_list[row] = n
+}
+loadings_var_reorder = loadings_var_reorder %>% mutate(order = order_list)
+RC1 = loadings_var_reorder %>% filter(order==1) %>% arrange(V1.bert)
+RC2 = loadings_var_reorder %>% filter(order==2) %>% arrange(desc(V2.bert))
+RC3 = loadings_var_reorder %>% filter(order==3) %>% arrange(V3.bert)
+RC4 = loadings_var_reorder %>% filter(order==4) %>% arrange(V4.bert)
+RC5 = loadings_var_reorder %>% filter(order==5) %>% arrange(desc(V5.bert))
+
+loadings_var_reorder = rbind(RC1,RC2,RC3,RC4,RC5)
+loadings_var_reorder = loadings_var_reorder[1:5]
+
+options(repr.plot.width=10, repr.plot.height=10)
+corrplot(as.matrix(loadings_var_reorder),is.corr=FALSE,
+         #addCoef.col = "black",
+         tl.col="black",tl.cex=1.5,
+         cl.ratio = 0.6,
+         col.lim = c(-1,1),
+         cl.cex = 1.5,
+         col = colorRampPalette(rev(brewer.pal(n=7,name ="RdBu")))(100))
+```
+
+```{r}
+ncomp = 7
+dim_rel.pca = prcomp(bert_768d)
+loadings_none = dim_rel.pca$rotation[,1:ncomp]%*% diag(dim_rel.pca$sdev,ncomp,ncomp)
+scores_none = dim_rel.pca$x[,1:ncomp] 
+
+# pca with varimax rotation
+loadings_var = data.frame(varimax(loadings_none)$loadings[,])
+scores_var = scale(scores_none) %*% varimax(loadings_none)$rotmat
+
+bert_scores = data.frame(scores_var)
+colnames(bert_scores) = paste0('V',seq(1,ncomp),'.bert')
+
+bert_human_combine = cbind(human_33d,bert_scores)
+bert_human_cor = cor(bert_human_combine,method='spearman')
+bert_loading = bert_human_cor[1:33,34:length(bert_human_combine)]
+loadings_var_reorder = data.frame(bert_loading)
+
+#filter each row's max loading, and attribute it to correspnding column.
+order_list = c()
+for (row in c(1:33)){
+    temp_max = abs(loadings_var_reorder[row,1])
+    n = 1
+    for (col in c(2:5)){
+        temp = abs(loadings_var_reorder[row,col])
+        if (temp > temp_max){
+            temp_max = temp
+            n = col
+        }
+        
+    }
+    order_list[row] = n
+}
+loadings_var_reorder = loadings_var_reorder %>% mutate(order = order_list)
+RC1 = loadings_var_reorder %>% filter(order==1) %>% arrange(V1.bert)
+RC2 = loadings_var_reorder %>% filter(order==2) %>% arrange(desc(V2.bert))
+RC3 = loadings_var_reorder %>% filter(order==3) %>% arrange(V3.bert)
+RC4 = loadings_var_reorder %>% filter(order==4) %>% arrange(V4.bert)
+RC5 = loadings_var_reorder %>% filter(order==5) %>% arrange(desc(V5.bert))
+
+loadings_var_reorder = rbind(RC1,RC2,RC3,RC4,RC5)
+loadings_var_reorder = loadings_var_reorder[1:5]
+
+options(repr.plot.width=10, repr.plot.height=10)
+corrplot(as.matrix(loadings_var_reorder),is.corr=FALSE,
+         #addCoef.col = "black",
+         tl.col="black",tl.cex=1.5,
+         cl.ratio = 0.6,
+         col.lim = c(-1,1),
+         cl.cex = 1.5,
+         col = colorRampPalette(rev(brewer.pal(n=7,name ="RdBu")))(100))
+```
+
+```{r}
+ncomp = 7
+dim_rel.pca = prcomp(bert_768d)
+loadings_none = dim_rel.pca$rotation[,1:ncomp]%*% diag(dim_rel.pca$sdev,ncomp,ncomp)
+scores_none = dim_rel.pca$x[,1:ncomp] 
+
+# pca with varimax rotation
+loadings_var = data.frame(varimax(loadings_none)$loadings[,])
+scores_var = scale(scores_none) %*% varimax(loadings_none)$rotmat
+
+bert_scores = data.frame(scores_var)
+colnames(bert_scores) = paste0('V',seq(1,ncomp),'.bert')
+
+bert_human_combine = cbind(human_33d,bert_scores)
+bert_human_cor = cor(bert_human_combine,method='spearman')
+bert_loading = bert_human_cor[1:33,34:length(bert_human_combine)]
+loadings_var_reorder = data.frame(bert_loading)
+
+#filter each row's max loading, and attribute it to correspnding column.
+order_list = c()
+for (row in c(1:33)){
+    temp_max = abs(loadings_var_reorder[row,1])
+    n = 1
+    for (col in c(2:7)){
+        temp = abs(loadings_var_reorder[row,col])
+        if (temp > temp_max){
+            temp_max = temp
+            n = col
+        }
+        
+    }
+    order_list[row] = n
+}
+loadings_var_reorder = loadings_var_reorder %>% mutate(order = order_list)
+loadings_var_reorder['谈判'] = 5
+loadings_var_reorder['积极性'] = 3
+loadings_var_reorder['共有式分享'] = 3
+loadings_var_reorder['金钱交换'] = 4
+RC1 = loadings_var_reorder %>% filter(order==1) %>% arrange(desc(V1.bert))
+RC2 = loadings_var_reorder %>% filter(order==2) %>% arrange(desc(V2.bert))
+RC3 = loadings_var_reorder %>% filter(order==3) %>% arrange(V3.bert)
+RC4 = loadings_var_reorder %>% filter(order==4) %>% arrange(desc(V4.bert))
+RC5 = loadings_var_reorder %>% filter(order==5) %>% arrange(desc(V5.bert))
+RC6 = loadings_var_reorder %>% filter(order==6) %>% arrange(desc(V6.bert))
+RC7 = loadings_var_reorder %>% filter(order==7) %>% arrange(V7.bert)
+
+loadings_var_reorder = rbind(RC1,RC2,RC3,RC4,RC5,RC6,RC7)
+loadings_var_reorder = loadings_var_reorder[1:7]
+
+options(repr.plot.width=10, repr.plot.height=10)
+corrplot(as.matrix(loadings_var_reorder),is.corr=FALSE,
+         #addCoef.col = "black",
+         tl.col="black",tl.cex=1.5,
+         cl.ratio = 0.5,
+         col.lim = c(-1,1),
+         cl.cex = 1.5,
+         col = colorRampPalette(rev(brewer.pal(n=7,name ="RdBu")))(100))
+```
+
+```{r}
+ncomp = 7
+dim_rel.pca = prcomp(bert_768d)
+loadings_none = dim_rel.pca$rotation[,1:ncomp]%*% diag(dim_rel.pca$sdev,ncomp,ncomp)
+scores_none = dim_rel.pca$x[,1:ncomp] 
+
+# pca with varimax rotation
+loadings_var = data.frame(varimax(loadings_none)$loadings[,])
+scores_var = scale(scores_none) %*% varimax(loadings_none)$rotmat
+
+bert_scores = data.frame(scores_var)
+colnames(bert_scores) = paste0('V',seq(1,ncomp),'.bert')
+
+bert_human_combine = cbind(human_33d,bert_scores)
+bert_human_cor = cor(bert_human_combine,method='spearman')
+bert_loading = bert_human_cor[1:33,34:length(bert_human_combine)]
+loadings_var_reorder = data.frame(bert_loading)
+
+#filter each row's max loading, and attribute it to correspnding column.
+order_list = c()
+for (row in c(1:33)){
+    temp_max = abs(loadings_var_reorder[row,1])
+    n = 1
+    for (col in c(2:7)){
+        temp = abs(loadings_var_reorder[row,col])
+        if (temp > temp_max){
+            temp_max = temp
+            n = col
+        }
+        
+    }
+    order_list[row] = n
+}
+loadings_var_reorder = abs(loadings_var_reorder) %>% mutate(order = order_list)
+loadings_var_reorder['谈判'] = 5
+loadings_var_reorder['积极性'] = 3
+loadings_var_reorder['共有式分享'] = 3
+loadings_var_reorder['金钱交换'] = 4
+RC1 = loadings_var_reorder %>% filter(order==1) %>% arrange(desc(V1.bert))
+RC2 = loadings_var_reorder %>% filter(order==2) %>% arrange(desc(V2.bert))
+RC3 = loadings_var_reorder %>% filter(order==3) %>% arrange(desc(V3.bert))
+RC4 = loadings_var_reorder %>% filter(order==4) %>% arrange(desc(V4.bert))
+RC5 = loadings_var_reorder %>% filter(order==5) %>% arrange(V5.bert)
+RC6 = loadings_var_reorder %>% filter(order==6) %>% arrange(desc(V6.bert))
+RC7 = loadings_var_reorder %>% filter(order==7) %>% arrange(V7.bert)
+
+loadings_var_reorder = rbind(RC1,RC2,RC3,RC4,RC5,RC6,RC7)
+loadings_var_reorder = loadings_var_reorder[1:7]
+
+options(repr.plot.width=10, repr.plot.height=10)
+corrplot(as.matrix(loadings_var_reorder),is.corr=FALSE,
+         #addCoef.col = "black",
+         tl.col="black",tl.cex=1.5,
+         cl.ratio = 0.5,
+         col.lim = c(0,1),
+         cl.cex = 1.5,
+         col = colorRampPalette(c("white","darkred"))(100))
+```
+
+```{r}
+png("output_graph/modern_PCA_loading_abs.png", bg="transparent",
+    family = 'sans',units='in',width=10,height=10,res=300)
+options(repr.plot.width=10, repr.plot.height=10)
+corrplot(as.matrix(loadings_var_reorder),is.corr=FALSE,
+         #addCoef.col = "black",
+         tl.col="black",tl.cex=1.5,
+         cl.ratio = 0.5,
+         col.lim = c(0,1),
+         cl.cex = 1.5,
+         col = colorRampPalette(c("white","darkred"))(100))
+dev.off()
+```
+
+# ancient
+```{r}
+bert_768d_ancient=read.csv('bert_embedding_data/ancient/q3.2_bert_embedding_data/MASK_embedding_output.csv',row.names = 1, check.names = FALSE, fileEncoding = 'UTF-8')
+
+prompt_rels_map = read.csv('human_rating_data/ancient_modern_map_143r.csv',row.names=1,check.names=FALSE, fileEncoding = 'gb18030')
+name_mapping <- setNames(prompt_rels_map$'对应的现代人际关系', # new name
+                         prompt_rels_map$'query') # old name
+```
+
+```{r}
+bert_768d_ancient$old_word = rownames(bert_768d_ancient)
+# 请运行这两行看看输出结果是什么：
+head(prompt_rels_map$query)
+head(bert_768d_ancient$old_word)
+
+```
+
+```{r}
+bert_merged = merge(prompt_rels_map[, c("query", "对应的现代人际关系")], 
+                    bert_768d_ancient, 
+                    by.x = "query", 
+                    by.y = "old_word")
+
+bert_numeric_data = bert_merged[, 3:ncol(bert_merged)]
+
+bert_aggregated = aggregate(bert_numeric_data, by = list(Category = new_labels), FUN = mean)
+rownames(bert_aggregated) = bert_aggregated$Category
+
+bert_768d_ancient = bert_aggregated[, -1]
+bert_768d_ancient = scaleN(bert_768d_ancient)
+rels_ancient_order = rownames(bert_768d_ancient)
+
+dim(bert_768d_ancient)
+
+```
+
+```{r}
+human_scores_ancient = human_scores[rels_ancient_order,]
+human_33d_ancient = human_33d[rels_ancient_order,]
+
+valid_names = intersect(rels_ancient_order, colnames(human_sim))
+human_sim_ancient = human_sim[valid_names, valid_names]
+
+bert_768d_ancient = bert_768d_ancient[valid_names, ]
+rels_ancient_order = valid_names 
+
+human_sim_ancient = human_sim[rels_ancient_order,rels_ancient_order]
+human_sim_ancient_array = lowerTriangle(human_sim_ancient)
+bert_768d_ancient_sim = cosine_matrix(bert_768d_ancient)
+cor(human_sim_ancient_array,lowerTriangle(bert_768d_ancient_sim), method = 'spearman')
+```
+
+##FAVEE
+```{r}
+ncomp = 3
+dim_rel.pca = prcomp(bert_768d_ancient)
+loadings_none = dim_rel.pca$rotation[,1:ncomp]%*% diag(dim_rel.pca$sdev,ncomp,ncomp)
+scores_none = dim_rel.pca$x[,1:ncomp] 
+
+# pca with varimax rotation
+loadings_var = data.frame(varimax(loadings_none)$loadings[,])
+scores_var = scale(scores_none) %*% varimax(loadings_none)$rotmat
+
+bert_scores = data.frame(scores_var)
+colnames(bert_scores) = paste0('V',seq(1,ncomp),'.bert')
+
+rownames(bert_scores) = rownames(bert_768d_ancient)
+bert_human_combine = merge(human_scores_ancient, bert_scores, by = "row.names")
+rownames(bert_human_combine) = bert_human_combine$Row.names
+bert_human_combine = bert_human_combine[, -1] 
+
+bert_human_cor = cor(bert_human_combine,method='spearman')
+
+options(repr.plot.width=6, repr.plot.height=8)
+corrplot(bert_human_cor[1:5,6:length(bert_human_combine)],is.corr=FALSE,
+         addCoef.col = "black",
+         tl.col="black",tl.cex=1.5,
+         col.lim = c(-1,1),
+         col = colorRampPalette(rev(brewer.pal(n=7,name ="RdBu")))(100))
+```
+
+```{r}
+ncomp = 4
+dim_rel.pca = prcomp(bert_768d_ancient)
+loadings_none = dim_rel.pca$rotation[,1:ncomp]%*% diag(dim_rel.pca$sdev,ncomp,ncomp)
+scores_none = dim_rel.pca$x[,1:ncomp] 
+
+# pca with varimax rotation
+loadings_var = data.frame(varimax(loadings_none)$loadings[,])
+scores_var = scale(scores_none) %*% varimax(loadings_none)$rotmat
+
+bert_scores = data.frame(scores_var)
+colnames(bert_scores) = paste0('V',seq(1,ncomp),'.bert')
+
+rownames(bert_scores) = rownames(bert_768d_ancient)
+bert_human_combine = merge(human_scores_ancient, bert_scores, by = "row.names")
+rownames(bert_human_combine) = bert_human_combine$Row.names
+bert_human_combine = bert_human_combine[, -1] 
+
+bert_human_cor = cor(bert_human_combine,method='spearman')
+
+options(repr.plot.width=8, repr.plot.height=8)
+corrplot(bert_human_cor[1:5,6:length(bert_human_combine)],is.corr=FALSE,
+         addCoef.col = "black",
+         tl.col="black",tl.cex=1.5,
+         col.lim = c(-1,1),
+         col = colorRampPalette(rev(brewer.pal(n=7,name ="RdBu")))(100))
+```
+
+```{r}
+ncomp = 5
+dim_rel.pca = prcomp(bert_768d_ancient)
+loadings_none = dim_rel.pca$rotation[,1:ncomp]%*% diag(dim_rel.pca$sdev,ncomp,ncomp)
+scores_none = dim_rel.pca$x[,1:ncomp] 
+
+# pca with varimax rotation
+loadings_var = data.frame(varimax(loadings_none)$loadings[,])
+scores_var = scale(scores_none) %*% varimax(loadings_none)$rotmat
+
+bert_scores = data.frame(scores_var)
+colnames(bert_scores) = paste0('V',seq(1,ncomp),'.bert')
+
+rownames(bert_scores) = rownames(bert_768d_ancient)
+bert_human_combine = merge(human_scores_ancient, bert_scores, by = "row.names")
+rownames(bert_human_combine) = bert_human_combine$Row.names
+bert_human_combine = bert_human_combine[, -1] 
+
+bert_human_cor = cor(bert_human_combine,method='spearman')
+
+options(repr.plot.width=8, repr.plot.height=8)
+corrplot(bert_human_cor[1:5,6:length(bert_human_combine)],is.corr=FALSE,
+         addCoef.col = "black",
+         tl.col="black",tl.cex=1.5,
+         col.lim = c(-1,1),
+         col = colorRampPalette(rev(brewer.pal(n=7,name ="RdBu")))(100))
+```
+
+```{r}
+ncomp = 6
+dim_rel.pca = prcomp(bert_768d_ancient)
+loadings_none = dim_rel.pca$rotation[,1:ncomp]%*% diag(dim_rel.pca$sdev,ncomp,ncomp)
+scores_none = dim_rel.pca$x[,1:ncomp] 
+
+# pca with varimax rotation
+loadings_var = data.frame(varimax(loadings_none)$loadings[,])
+scores_var = scale(scores_none) %*% varimax(loadings_none)$rotmat
+
+bert_scores = data.frame(scores_var)
+colnames(bert_scores) = paste0('V',seq(1,ncomp),'.bert')
+
+rownames(bert_scores) = rownames(bert_768d_ancient)
+bert_human_combine = merge(human_scores_ancient, bert_scores, by = "row.names")
+rownames(bert_human_combine) = bert_human_combine$Row.names
+bert_human_combine = bert_human_combine[, -1] 
+
+bert_human_cor = cor(bert_human_combine,method='spearman')
+
+options(repr.plot.width=8, repr.plot.height=8)
+corrplot(bert_human_cor[1:5,6:length(bert_human_combine)],is.corr=FALSE,
+         addCoef.col = "black",
+         tl.col="black",tl.cex=1.5,
+         col.lim = c(-1,1),
+         col = colorRampPalette(rev(brewer.pal(n=7,name ="RdBu")))(100))
+```
+
+```{r}
+ncomp = 7
+dim_rel.pca = prcomp(bert_768d_ancient)
+loadings_none = dim_rel.pca$rotation[,1:ncomp]%*% diag(dim_rel.pca$sdev,ncomp,ncomp)
+scores_none = dim_rel.pca$x[,1:ncomp] 
+
+# pca with varimax rotation
+loadings_var = data.frame(varimax(loadings_none)$loadings[,])
+scores_var = scale(scores_none) %*% varimax(loadings_none)$rotmat
+
+bert_scores = data.frame(scores_var)
+colnames(bert_scores) = paste0('V',seq(1,ncomp),'.bert')
+
+rownames(bert_scores) = rownames(bert_768d_ancient)
+bert_human_combine = merge(human_scores_ancient, bert_scores, by = "row.names")
+rownames(bert_human_combine) = bert_human_combine$Row.names
+bert_human_combine = bert_human_combine[, -1] 
+
+bert_human_cor = cor(bert_human_combine,method='spearman')
+
+options(repr.plot.width=8, repr.plot.height=8)
+corrplot(bert_human_cor[1:5,6:length(bert_human_combine)],is.corr=FALSE,
+         addCoef.col = "black",
+         tl.col="black",tl.cex=1.5,
+         col.lim = c(-1,1),
+         col = colorRampPalette(rev(brewer.pal(n=7,name ="RdBu")))(100))
+```
+
+```{r}
+ncomp = 7
+dim_rel.pca = prcomp(bert_768d_ancient)
+loadings_none = dim_rel.pca$rotation[,1:ncomp]%*% diag(dim_rel.pca$sdev,ncomp,ncomp)
+scores_none = dim_rel.pca$x[,1:ncomp] 
+# pca with varimax rotation
+loadings_var = data.frame(varimax(loadings_none)$loadings[,])
+scores_var = scale(scores_none) %*% varimax(loadings_none)$rotmat
+
+bert_scores = data.frame(scores_var)
+colnames(bert_scores) = paste0('V',seq(1,ncomp),'.bert')
+
+rownames(bert_scores) = rownames(bert_768d_ancient)
+bert_human_combine = merge(human_scores_ancient, bert_scores, by = "row.names")
+rownames(bert_human_combine) = bert_human_combine$Row.names
+bert_human_combine = bert_human_combine[, -1] 
+
+bert_human_cor = cor(bert_human_combine,method='spearman')
+bert_scores_ancient = bert_scores
+
+options(repr.plot.width=8, repr.plot.height=8)
+plot_scores_ancient = abs(bert_human_cor[1:5,6:length(bert_human_combine)])
+plot_scores_ancient = plot_scores_ancient[
+              paste0(c('Activeness','Equality','Exchange','Formality','Valence')),
+                      paste0('V',c(1,3,4,5,7,2,6),'.bert')]
+corrplot(plot_scores_ancient,is.corr=FALSE,
+         addCoef.col = "black",
+         tl.col="black",tl.cex=1.5,
+         col.lim = c(0,1),
+        col = colorRampPalette(c("white","#7EBD5B"))(100))
+cor.test(bert_human_combine$'Formality', bert_human_combine$'V5.bert', method='spearman')
+cor.test(bert_human_combine$'Activeness', bert_human_combine$'V1.bert', method='spearman')
+cor.test(bert_human_combine$'Valence', bert_human_combine$'V7.bert', method='spearman')
+cor.test(bert_human_combine$'Exchange', bert_human_combine$'V4.bert', method='spearman')
+cor.test(bert_human_combine$'Equality', bert_human_combine$'V3.bert', method='spearman')
+```
+
+```{r}
+plot_scores_ancient
+```
+
+```{r}
+png("output_graph/Ancient_PCA_cor.png", bg="transparent",
+    family = 'sans',units='in',width=8,height=8,res=300)
+
+options(repr.plot.width=8, repr.plot.height=8)
+plot_scores_ancient = abs(bert_human_cor[1:5,6:length(bert_human_combine)])
+plot_scores_ancient = plot_scores_ancient[
+              paste0(c('Activeness','Equality','Exchange','Formality','Valence')),
+                      paste0('V',c(1,3,4,5,7,2,6),'.bert')]
+corrplot(plot_scores_ancient,is.corr=FALSE,
+         #addCoef.col = "black",
+         tl.col="black",tl.cex=1.5,
+         col.lim = c(0,1),
+        col = colorRampPalette(c("white","#7EBD5B"))(100))
+dev.off()
+```
+```{r}
+ncomp = 8
+dim_rel.pca = prcomp(bert_768d_ancient)
+loadings_none = dim_rel.pca$rotation[,1:ncomp]%*% diag(dim_rel.pca$sdev,ncomp,ncomp)
+scores_none = dim_rel.pca$x[,1:ncomp] 
+
+# pca with varimax rotation
+loadings_var = data.frame(varimax(loadings_none)$loadings[,])
+scores_var = scale(scores_none) %*% varimax(loadings_none)$rotmat
+
+bert_scores = data.frame(scores_var)
+colnames(bert_scores) = paste0('V',seq(1,ncomp),'.bert')
+
+rownames(bert_scores) = rownames(bert_768d_ancient)
+bert_human_combine = merge(human_scores_ancient, bert_scores, by = "row.names")
+rownames(bert_human_combine) = bert_human_combine$Row.names
+bert_human_combine = bert_human_combine[, -1] 
+
+bert_human_cor = cor(bert_human_combine,method='spearman')
+
+options(repr.plot.width=8, repr.plot.height=8)
+corrplot(bert_human_cor[1:5,6:length(bert_human_combine)],is.corr=FALSE,
+         addCoef.col = "black",
+         tl.col="black",tl.cex=1.5,
+         col.lim = c(-1,1),
+         col = colorRampPalette(rev(brewer.pal(n=7,name ="RdBu")))(100))
+```
+
+```{r}
+ncomp = 9
+dim_rel.pca = prcomp(bert_768d_ancient)
+loadings_none = dim_rel.pca$rotation[,1:ncomp]%*% diag(dim_rel.pca$sdev,ncomp,ncomp)
+scores_none = dim_rel.pca$x[,1:ncomp] 
+
+# pca with varimax rotation
+loadings_var = data.frame(varimax(loadings_none)$loadings[,])
+scores_var = scale(scores_none) %*% varimax(loadings_none)$rotmat
+
+bert_scores = data.frame(scores_var)
+colnames(bert_scores) = paste0('V',seq(1,ncomp),'.bert')
+
+rownames(bert_scores) = rownames(bert_768d_ancient)
+bert_human_combine = merge(human_scores_ancient, bert_scores, by = "row.names")
+rownames(bert_human_combine) = bert_human_combine$Row.names
+bert_human_combine = bert_human_combine[, -1] 
+
+bert_human_cor = cor(bert_human_combine,method='spearman')
+
+options(repr.plot.width=8, repr.plot.height=8)
+corrplot(bert_human_cor[1:5,6:length(bert_human_combine)],is.corr=FALSE,
+         addCoef.col = "black",
+         tl.col="black",tl.cex=1.5,
+         col.lim = c(-1,1),
+         col = colorRampPalette(rev(brewer.pal(n=7,name ="RdBu")))(100))
+```
+
+```{r}
+ncomp = 10
+dim_rel.pca = prcomp(bert_768d_ancient)
+loadings_none = dim_rel.pca$rotation[,1:ncomp]%*% diag(dim_rel.pca$sdev,ncomp,ncomp)
+scores_none = dim_rel.pca$x[,1:ncomp] 
+
+# pca with varimax rotation
+loadings_var = data.frame(varimax(loadings_none)$loadings[,])
+scores_var = scale(scores_none) %*% varimax(loadings_none)$rotmat
+
+bert_scores = data.frame(scores_var)
+colnames(bert_scores) = paste0('V',seq(1,ncomp),'.bert')
+
+rownames(bert_scores) = rownames(bert_768d_ancient)
+bert_human_combine = merge(human_scores_ancient, bert_scores, by = "row.names")
+rownames(bert_human_combine) = bert_human_combine$Row.names
+bert_human_combine = bert_human_combine[, -1] 
+
+bert_human_cor = cor(bert_human_combine,method='spearman')
+
+options(repr.plot.width=8, repr.plot.height=8)
+corrplot(bert_human_cor[1:5,6:length(bert_human_combine)],is.corr=FALSE,
+         addCoef.col = "black",
+         tl.col="black",tl.cex=1.5,
+         col.lim = c(-1,1),
+         col = colorRampPalette(rev(brewer.pal(n=7,name ="RdBu")))(100))
+```
+
+## dimension
+```{r}
+ncomp = 5
+dim_rel.pca = prcomp(bert_768d_ancient)
+loadings_none = dim_rel.pca$rotation[,1:ncomp]%*% diag(dim_rel.pca$sdev,ncomp,ncomp)
+scores_none = dim_rel.pca$x[,1:ncomp] 
+
+# pca with varimax rotation
+loadings_var = data.frame(varimax(loadings_none)$loadings[,])
+scores_var = scale(scores_none) %*% varimax(loadings_none)$rotmat
+
+bert_scores = data.frame(scores_var)
+colnames(bert_scores) = paste0('V',seq(1,ncomp),'.bert')
+
+rownames(bert_scores) = rownames(bert_768d_ancient)
+bert_human_combine = merge(human_33d_ancient, bert_scores, by = "row.names")
+rownames(bert_human_combine) = bert_human_combine$Row.names
+bert_human_combine = bert_human_combine[, -1] 
+
+bert_human_cor = cor(bert_human_combine,method='spearman')
+bert_loading = bert_human_cor[1:33,34:length(bert_human_combine)]
+loadings_var_reorder = data.frame(bert_loading)
+
+#filter each row's max loading, and attribute it to correspnding column.
+order_list = c()
+for (row in c(1:33)){
+    temp_max = abs(loadings_var_reorder[row,1])
+    n = 1
+    for (col in c(2:5)){
+        temp = abs(loadings_var_reorder[row,col])
+        if (temp > temp_max){
+            temp_max = temp
+            n = col
+        }
+        
+    }
+    order_list[row] = n
+}
+loadings_var_reorder = loadings_var_reorder %>% mutate(order = order_list)
+RC1 = loadings_var_reorder %>% filter(order==1) %>% arrange(desc(V1.bert))
+RC2 = loadings_var_reorder %>% filter(order==2) %>% arrange(desc(V2.bert))
+RC3 = loadings_var_reorder %>% filter(order==3) %>% arrange(V3.bert)
+RC4 = loadings_var_reorder %>% filter(order==4) %>% arrange(V4.bert)
+RC5 = loadings_var_reorder %>% filter(order==5) %>% arrange(desc(V5.bert))
+
+loadings_var_reorder = rbind(RC1,RC2,RC3,RC4,RC5)
+loadings_var_reorder = loadings_var_reorder[1:5]
+
+options(repr.plot.width=10, repr.plot.height=10)
+corrplot(as.matrix(loadings_var_reorder),is.corr=FALSE,
+         #addCoef.col = "black",
+         tl.col="black",tl.cex=1.5,
+         cl.ratio = 0.5,
+         col.lim = c(-1,1),
+         col = colorRampPalette(rev(brewer.pal(n=7,name ="RdBu")))(100))
+```
+
+```{r}
+ncomp = 6
+dim_rel.pca = prcomp(bert_768d_ancient)
+loadings_none = dim_rel.pca$rotation[,1:ncomp]%*% diag(dim_rel.pca$sdev,ncomp,ncomp)
+scores_none = dim_rel.pca$x[,1:ncomp] 
+
+# pca with varimax rotation
+loadings_var = data.frame(varimax(loadings_none)$loadings[,])
+scores_var = scale(scores_none) %*% varimax(loadings_none)$rotmat
+
+bert_scores = data.frame(scores_var)
+colnames(bert_scores) = paste0('V',seq(1,ncomp),'.bert')
+
+rownames(bert_scores) = rownames(bert_768d_ancient)
+bert_human_combine = merge(human_33d_ancient, bert_scores, by = "row.names")
+rownames(bert_human_combine) = bert_human_combine$Row.names
+bert_human_combine = bert_human_combine[, -1] 
+
+bert_human_cor = cor(bert_human_combine,method='spearman')
+bert_loading = bert_human_cor[1:33,34:length(bert_human_combine)]
+loadings_var_reorder = data.frame(bert_loading)
+
+#filter each row's max loading, and attribute it to correspnding column.
+order_list = c()
+for (row in c(1:33)){
+    temp_max = abs(loadings_var_reorder[row,1])
+    n = 1
+    for (col in c(2:5)){
+        temp = abs(loadings_var_reorder[row,col])
+        if (temp > temp_max){
+            temp_max = temp
+            n = col
+        }
+        
+    }
+    order_list[row] = n
+}
+loadings_var_reorder = loadings_var_reorder %>% mutate(order = order_list)
+RC1 = loadings_var_reorder %>% filter(order==1) %>% arrange(desc(V1.bert))
+RC2 = loadings_var_reorder %>% filter(order==2) %>% arrange(desc(V2.bert))
+RC3 = loadings_var_reorder %>% filter(order==3) %>% arrange(V3.bert)
+RC4 = loadings_var_reorder %>% filter(order==4) %>% arrange(V4.bert)
+RC5 = loadings_var_reorder %>% filter(order==5) %>% arrange(desc(V5.bert))
+
+loadings_var_reorder = rbind(RC1,RC2,RC3,RC4,RC5)
+loadings_var_reorder = loadings_var_reorder[1:5]
+
+options(repr.plot.width=10, repr.plot.height=10)
+corrplot(as.matrix(loadings_var_reorder),is.corr=FALSE,
+         #addCoef.col = "black",
+         tl.col="black",tl.cex=1.5,
+         cl.ratio = 0.5,
+         col.lim = c(-1,1),
+         col = colorRampPalette(rev(brewer.pal(n=7,name ="RdBu")))(100))
+```
+
+```{r}
+ncomp = 7
+dim_rel.pca = prcomp(bert_768d_ancient)
+loadings_none = dim_rel.pca$rotation[,1:ncomp]%*% diag(dim_rel.pca$sdev,ncomp,ncomp)
+scores_none = dim_rel.pca$x[,1:ncomp] 
+
+# pca with varimax rotation
+loadings_var = data.frame(varimax(loadings_none)$loadings[,])
+scores_var = scale(scores_none) %*% varimax(loadings_none)$rotmat
+
+bert_scores = data.frame(scores_var)
+colnames(bert_scores) = paste0('V',seq(1,ncomp),'.bert')
+
+rownames(bert_scores) = rownames(bert_768d_ancient)
+bert_human_combine = merge(human_33d_ancient, bert_scores, by = "row.names")
+rownames(bert_human_combine) = bert_human_combine$Row.names
+bert_human_combine = bert_human_combine[, -1] 
+
+bert_human_cor = cor(bert_human_combine,method='spearman')
+bert_loading = bert_human_cor[1:33,34:length(bert_human_combine)]
+loadings_var_reorder = data.frame(bert_loading)
+
+#filter each row's max loading, and attribute it to correspnding column.
+order_list = c()
+for (row in c(1:33)){
+    temp_max = abs(loadings_var_reorder[row,1])
+    n = 1
+    for (col in c(2:5)){
+        temp = abs(loadings_var_reorder[row,col])
+        if (temp > temp_max){
+            temp_max = temp
+            n = col
+        }
+        
+    }
+    order_list[row] = n
+}
+loadings_var_reorder = loadings_var_reorder %>% mutate(order = order_list)
+RC1 = loadings_var_reorder %>% filter(order==1) %>% arrange(desc(V1.bert))
+RC2 = loadings_var_reorder %>% filter(order==2) %>% arrange(desc(V2.bert))
+RC3 = loadings_var_reorder %>% filter(order==3) %>% arrange(V3.bert)
+RC4 = loadings_var_reorder %>% filter(order==4) %>% arrange(V4.bert)
+RC5 = loadings_var_reorder %>% filter(order==5) %>% arrange(desc(V5.bert))
+
+loadings_var_reorder = rbind(RC1,RC2,RC3,RC4,RC5)
+loadings_var_reorder = loadings_var_reorder[1:5]
+
+options(repr.plot.width=10, repr.plot.height=10)
+corrplot(as.matrix(loadings_var_reorder),is.corr=FALSE,
+         #addCoef.col = "black",
+         tl.col="black",tl.cex=1.5,
+         cl.ratio = 0.5,
+         col.lim = c(-1,1),
+         col = colorRampPalette(rev(brewer.pal(n=7,name ="RdBu")))(100))
+```
+

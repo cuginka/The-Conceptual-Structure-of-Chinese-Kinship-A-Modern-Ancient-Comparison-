@@ -1,0 +1,682 @@
+---
+title: "5.1RSA_correlation"
+author: "HuangYi"
+date: "2026-03-08"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## R Markdown
+
+This is an R Markdown document. Markdown is a simple formatting syntax for authoring HTML, PDF, and MS Word documents. For more details on using R Markdown see <http://rmarkdown.rstudio.com>.
+
+When you click the **Knit** button a document will be generated that includes both content as well as the output of any embedded R code chunks within the document. You can embed an R code chunk like this:
+
+```{r cars}
+summary(cars)
+```
+
+## Including Plots
+
+You can also embed plots, for example:
+
+```{r pressure, echo=FALSE}
+plot(pressure)
+```
+
+Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.
+
+```{r}
+library(mgsub)
+#install.packages("gghalves")
+#library(gghalves)
+library(reshape2)
+library(tidyverse)
+library(RColorBrewer)
+library(boot)
+library(corrplot)
+library(asbio)
+```
+
+```{r}
+#install.packages('fs')
+library(fs)
+```
+
+```{r}
+
+lowerTriangle <- function(m){
+  return(m[lower.tri(m)])
+}
+
+cor_matrix_plot = function(data,range){
+    options(repr.plot.width=10, repr.plot.height=10)
+    corrplot(data,is.corr=FALSE,
+             tl.pos="n", method = "color",
+             #col.lim = range,
+             cl.ratio = 0.05,
+             col = gray(100:0/100)
+             #col = colorRampPalette(rev(brewer.pal(n=7,name ="RdBu")))(100)
+            )
+}
+```
+
+
+# Human Rating data
+## FAVEE Model
+```{r}
+human_123r_rating = read.csv('human_rating_data/dim_rel_scaled_33d.csv',row.names = 1, fileEncoding = 'gb18030')
+rels_order_modern_123r = rownames(human_123r_rating)
+
+# FAVEE model: favee
+favee_123r_pc=read.csv('human_rating_data/human_model/human_123r_favee.csv',row.names=1, fileEncoding = 'gb18030') 
+favee_123r_pc <- favee_123r_pc[, 1:5] 
+#colnames(favee_258r_pc) = paste0(colnames(favee_258r_pc),'.modern')
+favee_123r_pc_dist = as.matrix(-dist(favee_123r_pc,method='euclidean'))
+favee_123r =  c(-dist(favee_123r_pc,method='euclidean'))
+max(favee_123r_pc_dist)
+min(favee_123r_pc_dist)
+
+# single dimension model: pcsdv
+
+ns <- length(favee_123r_pc)
+pcsds_123r <- list()
+pcsdv_123r = data.frame(matrix(nrow = 123*122/2, ncol=5))
+colnames(pcsdv_123r) = colnames(favee_123r_pc)
+for (i in 1:5){
+    pcsds_123r[[i]]<-as.matrix((-dist(favee_123r_pc[,i])))
+    pcsdv_123r[[i]] = c(-dist(favee_123r_pc[,i])) # take proximities on each dimension
+}
+names(pcsds_123r) = colnames(favee_123r_pc)
+```
+```{r}
+rels_order_ancient_143r = read.csv('human_rating_data/ancient_modern_map_143r.csv', fileEncoding = "gb18030")$'对应的现代人际关系'
+valid_rels <- intersect(rels_order_ancient_143r, rownames(favee_123r_pc))
+favee_114r_pc = favee_123r_pc[valid_rels, ]
+
+favee_114r_pc_dist = as.matrix(-dist(favee_114r_pc, method='euclidean'))
+favee_114r_dist_vector = c(-dist(favee_114r_pc, method='euclidean'))
+
+print(max(favee_114r_pc_dist, na.rm = TRUE))
+print(min(favee_114r_pc_dist, na.rm = TRUE))
+##print(paste("目标144个关系中，成功匹配到了:", length(valid_rels), "个"))
+
+# single dimension model: pcsdv
+ns <- length(favee_114r_pc)
+pcsds_114r <- list()
+pcsdv_114r = data.frame(matrix(nrow = 114*113/2, ncol=5))
+colnames(pcsdv_114r) = colnames(favee_114r_pc)
+for (i in 1:5){
+    pcsds_114r[[i]]<-as.matrix((-dist(favee_114r_pc[,i])))
+    pcsdv_114r[[i]] = c(-dist(favee_114r_pc[,i])) # take proximities on each dimension
+}
+names(pcsds_114r) = colnames(favee_114r_pc)
+```
+## HPP model
+```{r}
+# modern
+# HPP model: hpp
+hpp_123r_rdm = read.csv('human_rating_data/human_model/sim_human_123r_hpp.csv',row.names=1,check.names=FALSE, fileEncoding = 'gb18030')
+#cor_matrix_plot(as.matrix(hpp_258r_rdm),c(-1,0))
+hpp_123r = lowerTriangle(hpp_123r_rdm)
+```
+
+```{r}
+# ancient
+valid_rels <- intersect(rels_order_ancient_143r, colnames(hpp_123r_rdm))
+#print(paste("成功匹配的列数：", length(valid_rels)))
+
+hpp_110r_rdm = hpp_123r_rdm[valid_rels, valid_rels]
+write.csv(hpp_110r_rdm, 'human_rating_data/human_model/sim_human_110r_hpp.csv')
+hpp_110r = lowerTriangle(hpp_110r_rdm)
+```
+
+
+## Bert Embedding
+```{r}
+bert_emb_modern = read.csv('sim_bert_embedding/modern/q3.1_bert_embedding_data/MASK_embedding_output.csv',
+                   row.names = 1, check.names = FALSE, fileEncoding = 'gb18030')
+
+commen_rels = intersect(rels_order_modern_123r, rownames(bert_emb_modern
+                                                          ))
+bert_emb_modern = bert_emb_modern[commen_rels,commen_rels]
+bert_modern_array = lowerTriangle(bert_emb_modern)
+
+#cor_matrix_plot(as.matrix(bert_emb_modern),c(-1,1))
+```
+
+```{r}
+# ancient
+bert_emb_ancient = read.csv('sim_bert_embedding/ancient/q3.2_bert_embedding_data/MASK_embedding_output.csv', check.names = FALSE,fileEncoding = "UTF-8")
+
+row_names = bert_emb_ancient[, 1]
+data_matrix = as.matrix(bert_emb_ancient[, -1, drop = FALSE])
+
+# 处理重复行名：对重复项取平均值并保留第一个重复项
+unique_names = unique(row_names)
+result_matrix = matrix(NA, nrow = length(unique_names), ncol = ncol(data_matrix))
+rownames(result_matrix) = unique_names
+colnames(result_matrix) = colnames(data_matrix)
+
+for (i in seq_along(unique_names)) {
+  name = unique_names[i]
+  rows_idx = which(row_names == name)
+  if (length(rows_idx) > 1) {
+    result_matrix[i, ] = colMeans(data_matrix[rows_idx, , drop = FALSE])
+  } else {
+    result_matrix[i, ] = as.numeric(data_matrix[rows_idx, ])
+  }
+}
+bert_emb_ancient = as.data.frame(result_matrix)
+
+bert_emb_ancient = bert_emb_ancient[rels_order_ancient_143r,rels_order_ancient_143r]
+bert_ancient_array = lowerTriangle(bert_emb_ancient)
+#cor_matrix_plot(as.matrix(bert_emb_ancient),c(-1,1))
+```
+
+## Ceiling Performance
+```{r}
+human_cosine_sim_123r = read.csv('human_rating_data/human_model/human_33d_123r_cosine.csv',row.names=1,check.names=FALSE, fileEncoding = 'gb18030')
+
+#common_rows <- intersect(rownames(human_cosine_sim_123r), rels_order_modern_123r)
+#common_cols <- intersect(colnames(human_cosine_sim_123r), rels_order_modern_123r)
+#common <- intersect(common_rows, common_cols)
+
+#human_cosine_sim_123r <- human_cosine_sim_123r[common, common]
+
+human_cosine_sim_123r = human_cosine_sim_123r[rels_order_modern_123r,rels_order_modern_123r]
+dim(human_cosine_sim_123r)
+#cor_matrix_plot(as.matrix(human_cosine_sim_258r),c(-1,1))
+```
+
+## Spearman Correlation
+### modern:123 relationships
+```{r}
+# ceiling performance
+human_cosine_sim_123r_array = lowerTriangle(human_cosine_sim_123r)
+
+model_geo_combine = cbind(human_cosine_sim_123r_array,# ceiling performance
+                          bert_modern_array,#bert_modern
+                          favee_123r,
+                          hpp_123r,
+                          pcsdv_123r)
+model_geo_cor = cor(model_geo_combine, method = 'spearman')
+
+options(repr.plot.width=12, repr.plot.height=10)
+corrplot(as.matrix(model_geo_cor),is.corr=FALSE,
+         addCoef.col = "black",
+         tl.col="black",tl.cex=1.0,
+         col.lim = c(-1,1),
+         col = colorRampPalette(rev(brewer.pal(n=7,name ="RdBu")))(100))
+```
+
+```{r}
+png("output_graph/ceiling_performance.png", width = 12, height = 10, units = "in", res = 300)
+
+corrplot(as.matrix(model_geo_cor), is.corr = FALSE,
+         addCoef.col = "black",       
+         tl.col = "black",            
+         tl.cex = 1.0,
+         col.lim = c(-1, 1),
+         col = colorRampPalette(rev(brewer.pal(n = 7, name = "RdBu")))(100))
+
+dev.off()
+```
+
+
+```{r}
+modern_cvals = model_geo_cor[1:2,3:9]
+colnames(modern_cvals)[1] = c('FAVEE')
+colnames(modern_cvals)[2] = c('HPP')
+rownames(modern_cvals) = c('human','modern')
+modern_cvals
+```
+
+```{r}
+cvals_full <- modern_cvals[, 1:2]
+cvals_single = modern_cvals[,3:7]
+rowMeans(cvals_single)
+```
+
+### ancient:143 relations
+```{r}
+model_geo_combine = cbind(bert_ancient_array,#bert_ancient
+                          favee_114r_pc,
+                          #hpp_114r,
+                          #pcsdv_114r
+                          )
+model_geo_cor = cor(model_geo_combine, method = 'spearman')
+
+options(repr.plot.width=12, repr.plot.height=10)
+corrplot(as.matrix(model_geo_cor),is.corr=FALSE,
+         addCoef.col = "black",
+         tl.col="black",tl.cex=1.5,
+         col.lim = c(-1,1),
+         col = colorRampPalette(rev(brewer.pal(n=7,name ="RdBu")))(100))
+ancient_cvals = model_geo_cor[1,2:8]
+ancient_cvals
+```
+
+```{r}
+cvals = rbind(modern_cvals,ancient_cvals)
+rownames(cvals) = c('human','modern','ancient')
+cvals
+
+cvals_full = cvals[,1:2]
+cvals_full
+
+cvals_single = cvals[,3:7]
+cvals_single
+```
+
+```{r}
+rowMeans(cvals_single)
+```
+
+
+## Permutation test and Confidence intervals
+```{r}
+# Create the predicted model
+geo_list = list()
+geo_list[['human']] = human_cosine_sim_123r_array # ceiling performance
+geo_list[['modern']] = bert_modern_array
+#geo_list[['ancient']] = bert_ancient_array
+```
+
+### FAVEE & HPP model
+```{r}
+pre_123r_model = list()
+pre_123r_model[['FAVEE']] = favee_123r_pc_dist
+pre_123r_model[['HPP']] = hpp_123r_rdm
+
+#pre_120r_model = list()
+#pre_120r_model[['FAVEE']] = favee_120r_pc_dist
+#pre_120r_model[['HPP']] = hpp_120r_rdm
+     
+```
+
+```{r}
+permres_full_model <- array(NA,c(2,2,1000)) # 3=human,modern,ancient; 2=favee,hpp
+dimnames(permres_full_model) = list(c('human','modern'),c('FAVEE','HPP'))
+
+for (i in 1:1000){
+    for (geo in c('human','modern')){
+        sel = sample(123)# row/column order randomization index
+        pre_model = pre_123r_model
+        #if (geo == 'ancient'){
+            #sel = sample(120)
+            #pre_model = pre_120r_model
+        #}
+        for (model in names(pre_model)){
+            permat <- pre_model[[model]][sel,sel] # randomize predictors
+            permres_full_model[geo,model,i]<-cor(lowerTriangle(permat),geo_list[[geo]],
+                                                 method = 'spearman')
+        }
+    }
+}
+```
+
+```{r}
+save(permres_full_model,file = "permutation/permres_full_model.Rdata")
+```
+
+```{r}
+load("permutation/permres_full_model.Rdata")
+```
+
+```{r}
+pvals <- matrix(NA,2,2)
+rownames(pvals) = c('human','modern')
+colnames(pvals) = c('FAVEE','HPP')
+
+
+for(geo in c('human','modern')){
+  for (model in c('FAVEE','HPP')){
+    # p-values = prop. of permuted test stats > actual  
+    pvals[geo,model] <- mean(permres_full_model[geo,model,] > cvals_full[geo,model]) 
+  }
+}
+sig <- pvals<.025 # two-tailed test, so p = .05/2 = .025
+sig
+# confidence intrvals from shifted/flipped permtuation null dist.
+cis_full <- apply(-permres_full_model,c(1,2),quantile,c(.025,.975)) 
+```
+
+```{r}
+as.numeric(cis_full)
+#cis_full
+```
+
+## single dimension
+```{r}
+permres_single_model <- array(NA,c(2,5,1000)) # 3=human,modern,ancient; 5 single dimensions
+dimnames(permres_single_model) = list(c('human','modern'),
+                c('Formality','Activeness','Valence','Exchange','Equality'))
+
+for (i in 1:1000){
+    for (geo in c('human','modern')){
+        sel = sample(123)# row/column order randomization index
+        pre_model = pcsds_123r
+        #if (geo == 'ancient'){
+            #sel = sample(120)
+            #pre_model = pcsds_120r
+        #}
+        for (model in names(pre_model)){
+            permat <- pre_model[[model]][sel,sel] # randomize predictors
+            permres_single_model[geo,model,i]<-cor(lowerTriangle(permat),geo_list[[geo]],
+                                                   method = 'spearman')
+        }
+    }
+}
+```
+
+```{r}
+save(permres_single_model,file = "permutation/permres_single_model.Rdata")
+```
+
+```{r}
+load("permutation/permres_single_model.Rdata")
+```
+
+```{r}
+pvals <- matrix(NA,2,5)
+rownames(pvals) = c('human','modern')
+colnames(pvals) = c('Formality','Activeness','Valence','Exchange','Equality')
+
+for(geo in c('human','modern')){
+  for (model in c('Formality','Activeness','Valence','Exchange','Equality')){
+    # p-values = prop. of permuted test stats > actual  
+    pvals[geo,model] <- mean(permres_single_model[geo,model,] > cvals_single[geo,model]) 
+  }
+}
+sig <- pvals<.025 # two-tailed test, so p = .05/2 = .025
+sig
+# confidence intrvals from shifted/flipped permtuation null dist.
+cis_single <- apply(-permres_single_model,c(1,2),quantile,c(.025,.975)) 
+```
+## Plot Results
+```{r}
+#my.color = c('human'="#F2997A",'modern'="#a17db4",'ancient'="#9DCD82")
+my.color = c('human'="#F2997A",'modern'="#a17db4")
+```
+
+### FAVEE & HPP model
+```{r}
+#rvalue_interval 
+cvals_cis_full = melt(cvals_full)
+colnames(cvals_cis_full)[1] = 'geo'
+colnames(cvals_cis_full)[2] = 'model'
+# add interval
+# cvals_cis_full$'lower' = cis_full[seq(1, length(cis_full), by = 2)]
+# cvals_cis_full$'upper' = cis_full[seq(2, length(cis_full), by = 2)]
+# cvals_cis_full = cvals_cis_full %>% mutate(lower = lower+value,
+#                                  upper = upper+value)
+cvals_cis_full$model = factor(cvals_cis_full$model,
+                        levels = rev(c('FAVEE','HPP')))
+cvals_cis_full$geo = factor(cvals_cis_full$geo,
+                      levels = c('human','modern','ancient'))
+
+########################################################################
+df <- data.frame(geo = character(), model = character(), value = numeric())
+permres = permres_full_model
+for (geo_name in dimnames(permres)[[1]]) {
+  for (model_name in dimnames(permres)[[2]]) {
+    temp <- data.frame(
+      geo = geo_name, 
+      model = model_name, 
+      value = permres[geo_name, model_name, ]
+    )
+    
+    df <- bind_rows(df, temp)
+  }
+}
+df$model = factor(df$model,levels = rev(c('FAVEE','HPP')))
+df$geo = factor(df$geo,levels = c('human','modern'))
+df = df[df$'geo' %in% c('modern'),]
+df$'X' = paste(df$'geo',df$'model',sep='_')
+df$'X' = factor(df$'X',levels = c('modern_HPP','modern_FAVEE'))
+```
+
+```{r}
+write.csv(cvals_cis_full, 'permutation/cvals_cis_favee_hpp.csv')
+write.csv(df, 'permutation/favee_hpp.csv')
+```
+
+```{r}
+options(repr.plot.width=10,repr.plot.height=10)
+#cvals_cis = cvals_cis_full[cvals_cis_full$'geo'%in%c('modern','ancient'),]
+cvals_cis = cvals_cis_full
+cvals_cis$'X' = paste(cvals_cis$'geo',cvals_cis$'model',sep='_')
+cvals_cis$'X' = factor(cvals_cis$'X',
+                       levels = c('modern_HPP','modern_FAVEE'))
+
+ggplot() +
+# plot distribution
+geom_boxplot(data=df[df$'geo'%in%c('modern'),],aes(x=X,y=value,color=geo),
+             fatten = 1,
+              position=position_nudge(x=0.1,y=0),alpha=1,
+              outlier.shape = NA,width = 0.5, lwd = 2)+
+# plot RSA correlation
+geom_point(data=cvals_cis[cvals_cis$'geo' %in% c('modern','ancient'),], 
+           aes(x=X, y=value,color=geo),size=16)+
+# geom_segment(data=cvals_cis,aes(x=X,color=geo,xend=X,y=lower,yend=upper),
+#              size=6,alpha=0.3)+
+geom_hline(yintercept=cvals_cis[cvals_cis$'geo'=='human','value'][1], linetype='dashed',linewidth = 2,color="#F2997A")+
+geom_hline(yintercept=cvals_cis[cvals_cis$'geo'=='human','value'][2], linetype='dashed',linewidth = 2,color="#F2997A")+
+#coord_flip()+
+scale_color_manual(values=my.color)+
+scale_fill_manual(values=my.color)+
+theme_classic()+
+theme(axis.title = element_blank(),
+      #axis.text.y = element_blank(),
+      axis.text.y = element_text(size=40,color="black"),
+      axis.text.x = element_text(size=10,color="black"),
+      axis.line = element_line(linetype=1,color="black",size=2),    
+      legend.title = element_blank(),
+      legend.text = element_text(size=24),
+      legend.position = 'none'
+     )
+```
+
+```{r}
+png("output_graph/favee_hpp_predictive.png", bg="transparent",
+    family = 'sans',units='in',width=10,height=10,res=300)
+options(repr.plot.width=10,repr.plot.height=10)
+#cvals_cis = cvals_cis_full[cvals_cis_full$'geo'%in%c('modern','ancient'),]
+cvals_cis = cvals_cis_full
+cvals_cis$'X' = paste(cvals_cis$'geo',cvals_cis$'model',sep='_')
+cvals_cis$'X' = factor(cvals_cis$'X',
+                       levels = c('modern_HPP','modern_FAVEE'))
+
+ggplot() +
+# plot distribution
+geom_boxplot(data=df[df$'geo'%in%c('modern'),],aes(x=X,y=value,color=geo),
+             fatten = 1,
+              position=position_nudge(x=0.1,y=0),alpha=1,
+              outlier.shape = NA,width = 0.5, lwd = 2)+
+# plot RSA correlation
+geom_point(data=cvals_cis[cvals_cis$'geo' %in% c('modern'),], 
+           aes(x=X, y=value,color=geo),size=16)+
+# geom_segment(data=cvals_cis,aes(x=X,color=geo,xend=X,y=lower,yend=upper),
+#              size=6,alpha=0.3)+
+geom_hline(yintercept=cvals_cis[cvals_cis$'geo'=='human','value'][1], linetype='dashed',linewidth = 2,color="#F2997A")+
+geom_hline(yintercept=cvals_cis[cvals_cis$'geo'=='human','value'][2], linetype='dashed',linewidth = 2,color="#F2997A")+
+#coord_flip()+
+scale_color_manual(values=my.color)+
+scale_fill_manual(values=my.color)+
+theme_classic()+
+theme(axis.title = element_blank(),
+      #axis.text.y = element_blank(),
+      axis.text.y = element_text(size=40,color="black"),
+      axis.text.x = element_text(size=10,color="black"),
+      axis.line = element_line(linetype=1,color="black",size=2),    
+      legend.title = element_blank(),
+      legend.text = element_text(size=24),
+      legend.position = 'none'
+     )
+dev.off()
+```
+### single dimension
+```{r}
+#rvalue_interval 
+cvals_cis_single = melt(cvals_single)
+colnames(cvals_cis_single)[1] = 'geo'
+colnames(cvals_cis_single)[2] = 'model'
+cvals_cis_single = cvals_cis_single[cvals_cis_single$'geo'%in% c('ancient','modern'),]
+# add interval
+# cvals_cis_single$'lower' = cis_single[seq(1, length(cis_single), by = 2)]
+# cvals_cis_single$'upper' = cis_single[seq(2, length(cis_single), by = 2)]
+# cvals_cis_single = cvals_cis_single %>% mutate(lower = lower+value,
+#                                  upper = upper+value)
+cvals_cis_single$model = factor(cvals_cis_single$model,
+    levels = rev(c('Formality','Activeness','Valence','Exchange','Equality')))
+cvals_cis_single$geo = factor(cvals_cis_single$geo,
+   levels = c('modern'))
+
+########################################################################
+df <- data.frame(geo = character(), model = character(), value = numeric())
+permres = permres_single_model
+for (geo_name in dimnames(permres)[[1]]) {
+  for (model_name in dimnames(permres)[[2]]) {
+    temp <- data.frame(
+      geo = geo_name, 
+      model = model_name, 
+      value = permres[geo_name, model_name, ]
+    )
+    
+    df <- bind_rows(df, temp)
+  }
+}
+df = df[df$geo %in% c('modern'),]
+df$model = factor(df$model,
+ levels = c('Formality','Activeness','Valence','Exchange','Equality'))
+df$geo = factor(df$geo,levels = c('modern'))
+```
+
+```{r}
+write.csv(cvals_cis_single, 'permutation/cvals_cis_single_dimension.csv')
+write.csv(df, 'permutation/single_dimension.csv')
+```
+
+```{r}
+#diff_favee_list = c()
+#for (m in unique(cvals_cis_single$model)){
+#    model_value = cvals_cis_single[cvals_cis_single$model==m,'value']
+#    diff_value = model_value[1] - model_value[2]
+#    diff_favee_list = c(diff_favee_list, diff_value)
+#}
+#diff_favee = data.frame(diff = diff_favee_list, 
+#                        model = unique(cvals_cis_single$model),
+#                        start = #cvals_cis_single[cvals_cis_single$geo=='ancient','value'])
+#diff_favee
+```
+```{r}
+display_favee = data.frame(
+  model = cvals_cis_single$model,
+  value = cvals_cis_single$value
+)
+
+display_favee
+```
+
+```{r}
+options(repr.plot.width=13,repr.plot.height=13)
+cvals_cis = cvals_cis_single
+ggplot() +
+# plot distribution
+geom_half_violin(data=df,aes(x=model,y=value,color=geo,fill=geo),
+               position=position_nudge(x=0.1,y=0),
+               side='L',adjust=1.2,trim=F,color=NA,alpha=0.3)+
+geom_boxplot(data=df[df$geo=='modern',],aes(x=model,y=value,color=geo),
+             fatten = 1,position=position_nudge(x=-0.2),alpha=1,outlier.shape = NA,width = 0.3, lwd = 2)+
+geom_boxplot(data=df[df$geo=='ancient',],aes(x=model,y=value,color=geo),
+fatten = 1,position=position_nudge(x=0.2),alpha=1,outlier.shape = NA,width = 0.3, lwd = 2)+
+             
+# plot RSA correlation
+geom_segment(data=diff_favee,aes(x=model,xend=model,y=start,yend=start+diff),
+             size=6,alpha=0.3)+
+geom_point(data=cvals_cis, aes(x=model, y=value,color=geo),size=10)+
+
+scale_color_manual(values=my.color)+
+scale_fill_manual(values=my.color)+
+geom_hline(yintercept = 0,linetype='dashed',linewidth = 1.5)+
+theme_classic()+
+#coord_flip()+
+theme(axis.title = element_blank(),
+      #axis.text.y = element_blank(),
+      axis.text.y = element_text(size=30,color="black"),
+      axis.text.x = element_text(size=10,color="black"),
+      axis.line = element_line(linetype=1,color="black",size=2),    
+      legend.title = element_blank(),
+      legend.text = element_text(size=24),
+      legend.position = 'bottom'
+     )
+```
+
+```{r}
+options(repr.plot.width=13, repr.plot.height=13)
+cvals_cis = cvals_cis_single  
+
+ggplot() +
+  geom_boxplot(data=df, aes(x=model, y=value, color=geo),
+               fatten = 1, alpha=1, outlier.shape = NA, 
+               width = 0.3, lwd = 2) +
+  geom_segment(data=cvals_cis, aes(x=model, xend=model, y=0, yend=value),
+               size=6, alpha=0.3) +
+  
+  geom_point(data=cvals_cis, aes(x=model, y=value, color=geo), size=10) +
+  
+  scale_color_manual(values=my.color) +
+  scale_fill_manual(values=my.color) +
+  geom_hline(yintercept = 0, linetype='dashed', linewidth = 1.5) +
+  theme_classic() +
+  
+  #coord_flip() + 
+  
+  theme(axis.title = element_blank(),
+        axis.text.y = element_text(size=30, color="black"),
+        axis.text.x = element_text(size=10, color="black"),
+        axis.line = element_line(linetype=1, color="black", size=2),
+        legend.title = element_blank(),
+        legend.text = element_text(size=24),
+        legend.position = 'bottom'
+  )
+```
+
+```{r}
+png("output_graph/single_dimension_predictive.png", bg="transparent",
+    family = 'sans',units='in',width=13,height=13,res=300)
+
+options(repr.plot.width=13, repr.plot.height=13)
+cvals_cis = cvals_cis_single  
+
+ggplot() +
+  geom_boxplot(data=df, aes(x=model, y=value, color=geo),
+               fatten = 1, alpha=1, outlier.shape = NA, 
+               width = 0.3, lwd = 2) +
+  geom_segment(data=cvals_cis, aes(x=model, xend=model, y=0, yend=value),
+               size=6, alpha=0.3) +
+  
+  geom_point(data=cvals_cis, aes(x=model, y=value, color=geo), size=10) +
+  
+  scale_color_manual(values=my.color) +
+  scale_fill_manual(values=my.color) +
+  geom_hline(yintercept = 0, linetype='dashed', linewidth = 1.5) +
+  theme_classic() +
+  
+  #coord_flip() + 
+  
+  theme(axis.title = element_blank(),
+        axis.text.y = element_text(size=30, color="black"),
+        axis.text.x = element_text(size=10, color="black"),
+        axis.line = element_line(linetype=1, color="black", size=2),
+        legend.title = element_blank(),
+        legend.text = element_text(size=24),
+        legend.position = 'bottom'
+  )
+dev.off()
+```
+
