@@ -12,10 +12,10 @@ This repository contains the computational pipeline and analysis code for my ind
 This project bridges **Computational Linguistics** and **Social Cognition** by comparing human mental representations with high-dimensional embeddings from Large Language Models (LLMs). We investigate how the semantic geometry of kinship terms (e.g., *Father*, *Maternal Uncle*) has evolved from ancient texts to modern usage.
 
 ## 🚀 Key Features & Pipeline
-The analysis framework integrates **Representational Similarity Analysis (RSA)** to benchmark biological/behavioral data against artificial neural networks.
+The analysis framework integrates **Representational Similarity Analysis (RSA)** to benchmark behavioral data against artificial neural networks.
 
 ### 1. Behavioral Data Acquisition
-- Collected similarity ratings and kinship structure data from **N=450** human participants.
+- Collected similarity ratings and kinship structure data from **N=160** human participants.
 - Constructed human-based **Representational Dissimilarity Matrices (RDMs)** based on cognitive dimensions (generation, gender, lineage).
 
 ### 2. Computational Modeling (LLMs)
