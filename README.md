@@ -28,3 +28,31 @@ The analysis framework integrates **Representational Similarity Analysis (RSA)**
 ### 3. Neural-AI Alignment (RSA)
 - Calculated the Spearman correlation between Human RDMs and Model RDMs.
 - Quantified the "alignment score" to measure how well LLMs capture the anthropological structure of kinship.
+  
+## 📊 Some of Results 
+
+### 1. Semantic Manifold of Kinship Terms
+
+<p align="center">
+  <img src="images/cover_image.png" width="600" alt="Semantic manifold visualization of kinship terms">
+</p>
+
+**Figure 1.** A five-dimensional visualization of the semantic manifold underlying Chinese kinship terms. 
+Three continuous social-cognitive dimensions — **Formality**, **Activeness**, and **Valence** — are 
+mapped onto 3D spatial coordinates, while **Equality** is encoded via marker size and **Exchange** 
+(symbolic ↔ concrete) via the radial color gradient. Points are color-coded by cluster membership 
+(**Public** vs. **Private** discourse contexts), revealing a systematic dissociation in the semantic 
+organization of kinship terms across social domains. The background heatmaps depict the corresponding 
+Representational Dissimilarity Matrices (RDMs) used to derive this clustering structure.
+
+### 2. Human-Model Representational Alignment (Ceiling Performance)
+
+<p align="center">
+  <img src="images/ceiling_performance.png" width="600" alt="Correlation matrix between human and model representations">
+</p>
+
+**Figure 2.** Spearman correlation matrix quantifying the alignment between human similarity judgments 
+(`human_cosine_sim`), LLM-derived embedding similarities (`bert_modern_array`, `favee_123r`, `hpp_123r`), 
+and the five social-cognitive dimensions (Formality, Activeness, Valence, Exchange, Equality). This 
+analysis establishes an empirical **ceiling** for evaluating how well current language models capture 
+the anthropological and cognitive structure embedded in human kinship term representations.
