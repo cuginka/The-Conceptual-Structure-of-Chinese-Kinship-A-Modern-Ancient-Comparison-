@@ -1,0 +1,203 @@
+---
+title: "3.Comparison of PLms"
+author: "HuangYi"
+date: "2026-03-06"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## R Markdown
+
+This is an R Markdown document. Markdown is a simple formatting syntax for authoring HTML, PDF, and MS Word documents. For more details on using R Markdown see <http://rmarkdown.rstudio.com>.
+
+When you click the **Knit** button a document will be generated that includes both content as well as the output of any embedded R code chunks within the document. You can embed an R code chunk like this:
+
+```{r cars}
+summary(cars)
+```
+
+## Including Plots
+
+You can also embed plots, for example:
+
+```{r pressure, echo=FALSE}
+plot(pressure)
+```
+
+Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.
+
+```{r}
+library(tidyverse)
+library(mgsub)
+library(lsa) #cosine
+
+library(stringr)
+
+library(RColorBrewer)
+library(ggplot2)
+library(corrplot)
+library(patchwork)
+library(ggbeeswarm)
+```
+
+```{r}
+lowerTriangle <- function(m){
+  return(m[lower.tri(m,diag = FALSE)])
+}
+```
+
+# Modern
+```{r}
+human_123r_sim = read.csv('human_rating_data/human_model/human_33d_123r_cosine.csv',fileEncoding = 'gb18030', row.names=1,check.names=FALSE)
+rels_modern_order = rownames(human_123r_sim) 
+human_123r_sim_array = lowerTriangle(human_123r_sim)
+```
+
+```{r}
+#query = dir('sim_bert_embedding/modern/q1.1_bert_embedding_data/')
+bert_cor_df = data.frame(matrix(nrow=13,ncol=4)) # layer = 12 + output
+colnames(bert_cor_df) = c('query','layer','position','r_value')
+
+files = dir('sim_bert_embedding/modern/q1.1_bert_embedding_data/')
+count = 1
+
+```
+
+```{r}
+bert_sim = read.csv('sim_bert_embedding/modern/q1.1_bert_embedding_data/CLS_encoder_layer9.csv',
+                           row.names=1, check.names = FALSE, encoding = 'gb18030')
+        #colnames(bert_sim) = rownames(bert_sim)
+rels_bert_sim = rownames(bert_sim)
+commen_rels = intersect(rels_modern_order, rels_bert_sim)
+        
+bert_sim = bert_sim[commen_rels, commen_rels]
+bert_sim_array = lowerTriangle(bert_sim)
+
+        ### 2. caculate spearman correlation between huamn rating and bert embedding
+human_bert_sim = cbind(human_123r_sim_array, bert_sim_array)
+r_value = cor(human_bert_sim, method = 'spearman')[1, 2]
+        #r_value = cor(human_bert_sim, method = 'spearman')
+print(r_value)
+```
+
+
+```{r}
+querys = dir('sim_bert_embedding/modern/')
+for (query in querys){
+    bert_cor_df = data.frame(matrix(nrow=13,ncol=4)) # layer = 12 + output
+    colnames(bert_cor_df) = c('query','layer','position','r_value')
+    
+    ### 1.import all files in each quesy
+    files = dir(paste0('sim_bert_embedding/modern/',query,'/'))
+    count = 1
+    for (file in files){
+        bert_sim = read.csv(paste0('sim_bert_embedding/modern/',query,'/',file),
+                           row.names=1, check.names = FALSE, encoding = 'gb18030')
+        #colnames(bert_sim) = rownames(bert_sim)
+        rels_bert_sim = rownames(bert_sim)
+        commen_rels = intersect(rels_modern_order, rels_bert_sim)
+        
+        bert_sim_sub = bert_sim[commen_rels, commen_rels]
+        bert_sim_array = lowerTriangle(bert_sim_sub)
+
+        ### 2. caculate spearman correlation between huamn rating and bert embedding
+        human_bert_sim = cbind(human_123r_sim_array, bert_sim_array)
+        r_value = cor(human_bert_sim, method = 'spearman')[1, 2]
+        #r_value = cor(human_bert_sim, method = 'spearman')
+
+        ### 3.store r value results in dataframe
+        layer = strsplit(strsplit(file,'_')[[1]][3],'.csv')[[1]]
+        position = strsplit(file,'_')[[1]][1]
+        if (grepl('layer',layer)){layer=layer}
+            else{layer='hidden'}
+        bert_cor_df[count,1] = query
+        bert_cor_df[count,2] = layer
+        bert_cor_df[count,3] = position
+        bert_cor_df[count,4] = r_value        
+        count = count + 1
+    }
+    write.csv(bert_cor_df,paste0('human_bert_cor/modern/',query,'.csv'))
+    print(query)    
+}
+```
+
+```{r}
+querys = dir('sim_bert_embedding/modern/')
+all_cor_df = data.frame(matrix(ncol=4))
+colnames(all_cor_df) = c('query','layer','position','r_value')
+
+for (query in querys){
+    cor_df = read.csv(paste0('human_bert_cor/modern/',query,'.csv'),row.names=1)
+    all_cor_df = rbind(all_cor_df, cor_df)
+    all_cor_df = na.omit(all_cor_df)
+    all_cor_df$'query' = str_extract(all_cor_df$'query', "q[0-9]\\.[0-9]+")
+} 
+
+CLS_cor_df = all_cor_df[all_cor_df$'position'=='CLS',]
+MASK_cor_df = all_cor_df[all_cor_df$'position'=='MASK',]
+relationship_cor_df = all_cor_df[all_cor_df$'position'=='关系',]
+```
+
+```{r}
+my.color = c('q1.1'= '#FC8002','q1.2'='#FABB6E',
+             'q2.1'='#882d9f','q2.2'='#c488db',
+             'q3.2'='#EE4431','q3.1'='#B9181A',#'q3.3'='#FAC7B3',
+             'q4.0'='#CEDFEF','q4.1'='#CEDFEF','q4.2'='#4995C6','q4.3'='#92C2DD')
+
+my.alpha = c('q1.1'= 0.5,'q2.2'=0.5,
+            'q1.2'=0.5, 'q3.1'=1,
+            'q2.1'=0.5,'q3.2'=0.5,#'q3.3'=0.5,
+             'q4.0'=0.5,'q4.2'=0.5,'q4.3'=0.5)
+```
+
+```{r}
+Plot_sim_trend = function(df){
+    df = df %>% 
+        #mutate(layer = str_replace(layer, "(\\d+)$", function(m) as.character(as.numeric(m) + 1)))
+        mutate(layer = as.numeric(str_extract(layer, "\\d+")) + 1)  %>% na.omit()
+
+    #layers = df[grep('layer',df$layer),]
+    layers = df
+    layers$layer = factor(layers$layer, levels=seq(1,24))
+    #layers$query = factor(layers$query, levels=rev(paste0('q',seq(1,6))))
+    options(repr.plot.width=8,repr.plot.height=3.5)
+    p = ggplot(layers, aes(x=layer, y =r_value, group=query,color=query,alpha=query))+
+        geom_line(size=1.5)+
+        geom_point(size=5)+
+        scale_color_manual(values = my.color) +                          
+        scale_alpha_manual(values = my.alpha) +   
+    
+        scale_y_continuous(breaks=seq(0,0.7,0.1),limits=c(0,0.7))+
+
+        #coord_flip() +
+        #ylim(c(0,0.75))+
+        theme_minimal()+
+        theme(#legend.position = 'none',
+              axis.title = element_blank(),
+              axis.text = element_text(size=20,color="black"),
+              axis.line = element_line(linetype=1,color="black",size=1.5),
+              plot.title = element_text(size = 20, face = "bold",hjust = 0.5))
+    return(p)
+    }
+```
+
+```{r}
+Plot_sim_trend(CLS_cor_df)
+Plot_sim_trend(relationship_cor_df)
+```
+
+```{r}
+Plot_sim_trend(MASK_cor_df)
+```
+
+```{r}
+png("output_graph/mask_embedding/modern_MASK.png", bg="transparent",
+    family = 'sans',units='in',width=8,height=3.5,res=300)
+Plot_sim_trend(MASK_cor_df)
+dev.off()
+```
+
+
